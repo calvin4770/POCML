@@ -50,7 +50,7 @@ class POCML(torch.nn.Module):
                  memory=None,
                  obs=None
     ):
-        super(self).__init__()
+        super().__init__()
         self.n_obs = n_obs # number of obss
         self.n_states = n_states # number of states
         self.n_actions = n_actions # number of actions
