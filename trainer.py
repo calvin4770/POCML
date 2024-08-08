@@ -86,6 +86,34 @@ class POCMLTrainer(CMLTrainer):
         self.device = device
         self.norm = norm
 
+        # POCML model param for training
+        self.beta = model.beta                                  # state prediction temperature, eq(21)
+        self.alpha = model.random_feature_map.alpha             # lengscale 
+        # TODO D, depending on normalization ~~~ learning rate
+        self.lr_Q_o = 0.1
+        self.lr_V_o = 0.1
+        self.lr_Q_s = 0.1
+        self.lr_V_s = 0.1
+
+    # Create tensor reused in the update rule (30 - 33)
+    def __prep_update(self, w_tilde, w_hat, oh_a):
+        
+        model = self.model 
+        Q = model.Q
+
+        omega = torch.outer(w_tilde, w_hat)                 # omega_ij = w_tilde_i * w_hat_j
+
+        v_t = model.V @ oh_a
+        s_hat = (Q.T) + v_t[None, :]                        # s_hat_j = (s_j + v_t)
+        diff_s = (Q.T)[:, None, :] - s_hat[None, :, :]      # generate n_s * n_s * n tensor [s_i - s_hat_j]_i,j
+        
+        diff_s_squared_norm = torch.sum(diff_s ** 2, dim=-1)
+        K = torch.exp(-self.alpha * diff_s_squared_norm)
+
+        self.update_tensor = (omega * K)[:, : ,None] * diff_s
+        #self.update_tensor = torch.einsum('ij,ijm->ijm', omega * K, diff_s)    # Alternatively
+
+
     def train(self, epochs:int = 10) -> list:
 
         loss_record = []
@@ -103,11 +131,6 @@ class POCMLTrainer(CMLTrainer):
         device = self.device
         norm = self.norm
         loss_record = []
-
-        # POCML model param for training
-        beta = model.beta # state prediction temperature, eq(21)
-        # alpha / lengscale * beta ~~~ learning rate 
-        # D, depending on normalization ~~~ leanring rate
 
         # memory transfer option/reset rate + for decay design
         self.model.init_memory()                    # reset model's memory for new trajectory          
@@ -152,23 +175,25 @@ class POCMLTrainer(CMLTrainer):
                 state_pred_mem = self.model.compute_weights(hd_state_pred_mem)  # (24) 
 
                 # weight computation, (28) (29)
-                w_hat = self.model.infer_state_from_hd_state(hd_s_pred_bind)            # s^{hat}_t^{prime} is not computed in this iteration eq (28)
-                                                                                        # s^{hat}_t; 
-                                                                                        # edge case: get weight from initial states (t=0)
-                w_tilde = state_pred_mem                                                # eq (29) = (24)
+                w_hat = self.model.infer_state_from_hd_state(hd_s_pred_bind_precleanup)     # s^{hat}_t^{prime} is not computed in this iteration eq (28)
+                                                                                            # TODO option to use s^{hat}_t; 
+                w_tilde = state_pred_mem                                                    # eq (29) = (24)
 
-                model.prep_update()                                                # prepare for update, eq (30-33)          
+                # update rule, eq (30-33)
+
+                update = self.__prep_update(w_hat, w_tilde, oh_a)                       # prepare for update, eq (30-33)     
+
                 # obsevation update rule, eq (30, 31)
-                model.update_Q_o()                             # update observation for time t+1, x_{t+1} eq (30, 31)  
-                model.update_V_o()                             #
+                self.__update_Q_o(oh_o_next_pred, oh_o_next)                             # update observation for time t+1, x_{t+1} eq (30, 31)  
+                self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)                       #
 
-                # state update rule, eq (32, 33)
-                model.update_Q_s()                             # update observation for time t+1, x_{t+1} eq (32, 33)
-                model.update_V_s()                             # 
+                # state update rule, eq (32, 33) TODO
+                self.__update_Q_s(state_pred_bind)                                      # update observation for time t+1, x_{t+1} eq (32, 33)
+                self.__update_V_s()                                                     # 
 
                 # self.model_update_memory(o_next) # memorize observation at time t+1 for eq (20)
                 model.update_memory(hd_s_pred_bind, oh_o_next)
-
+                # keep the state prediction from binding at time t+1 to used in the next iteration for equation (28)
                 hd_s_pred_bind_precleanup_t = hd_s_pred_bind_precleanup
 
                 t += 1                                  # increment time 
@@ -176,7 +201,35 @@ class POCMLTrainer(CMLTrainer):
             # collect loss; would likely have to be in the inner loop.
             loss = -1                                           # TODO (model) compute loss for the current time step   
             loss_record.append(loss.cpu().item())
+    
+    def __update_Q_o(self, oh_o_next_pred, oh_o_next_target):
 
+        eta = self.lr_Q_o * self.alpha * self.beta
+        
+        u = torch.eye(self.model.n_size).to(self.device)        # TODO double check if this can be optimized
+        self.model.Q += eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
+                        torch.einsum('ijk,jl->kl', self.update_tensor, u)
+        
+
+    def __update_V_o(self, oh_o_next_pred, oh_o_next_target, oh_a):
+
+        eta = self.lr_V_o * self.alpha * self.beta
+
+        self.model.V += eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
+                        torch.einsum('ijk,l->kl', self.update_tensor, oh_a)
+        
+    def __update_Q_s(self, oh_o_next_pred, oh_o_next_target):
+
+        eta = self.lr_Q_s * self.alpha * self.beta
+        
+        pass #TODO
+        
+
+    def __update_V_s(self, oh_o_next_pred, oh_o_next_target, oh_a):
+
+        eta = self.lr_V_s * self.alpha * self.beta
+
+        pass # TODO 
 
 
 
