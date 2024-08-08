@@ -111,8 +111,8 @@ class RandomWalkDataset(Dataset):
         self.num_trajectories = num_trajectories
         self.trajectory_length = trajectory_length
         self.edges, self.action_indices = edges_from_adjacency(adj_matrix)
-        #start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist()
-        start_nodes = [torch.randint(0, adj_matrix.size(0), (1,)).tolist()[0]] * num_trajectories # same start node for all
+        start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
+        #start_nodes = [torch.randint(0, adj_matrix.size(0), (1,)).tolist()[0]] * num_trajectories # same start node for all
         self.data = []
         for node in start_nodes:
             items = (torch.rand(self.adj_matrix.shape[0]) * self.n_items).to(torch.int32)
@@ -163,7 +163,10 @@ def edges_from_adjacency(adj_matrix):
     return edges, action_indices
 
 class GraphEnv():
-    def __init__(self, size=32, n_items=10, env='random', batch_size=15, num_desired_trajectories=10, device=None):
+    # size -> size of random subgraph; does not apply to other environments
+    # n_items -> # possible observations
+    # unique = True -> each state is assigned a unique observation
+    def __init__(self, size=32, n_items=10, env='random', batch_size=15, num_desired_trajectories=10, device=None, unique=False):
         if env == 'random':
             self.adj_matrix = construct_random_subgraph(size, 2, 5)
         elif env == 'small world':
@@ -172,8 +175,9 @@ class GraphEnv():
             self.adj_matrix = construct_dead_ends_graph()
         elif env == 'grid':
             self.adj_matrix = construct_grid_graph()
+        
         self.adj_matrix = torch.tensor(self.adj_matrix)
-        self.size = self.adj_matrix.shape[0]
+        self.size = self.adj_matrix.shape[0] # number of nodes
         self.affordance, self.node_to_action_matrix,\
         self.action_to_node = node_outgoing_actions(self.adj_matrix)
         
@@ -183,7 +187,11 @@ class GraphEnv():
         self.action_to_node = {k: torch.tensor(v).to(device) \
                             for k, v in self.action_to_node.items()}
         
-        self.n_items = n_items
+        self.unique = unique
+        if not unique:
+            self.n_items = n_items
+        else:
+            self.n_items = self.size
         self.batch_size = batch_size
         self.num_desired_trajectories = num_desired_trajectories
         self.populate_graph()
@@ -191,7 +199,10 @@ class GraphEnv():
 
     # uniformly random observations
     def populate_graph(self):
-        self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
+        if self.unique:
+            self.items = torch.arange(0, self.n_items)
+        else:
+            self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
 
     def gen_dataset(self):
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
