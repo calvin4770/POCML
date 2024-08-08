@@ -21,7 +21,7 @@ def sim(x, y):
 
 class RandomFeatureMap(torch.nn.Module):
     def __init__(self, in_dim, out_dim, alpha=1):
-        super(self).__init__()
+        super().__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.alpha = alpha # inverse length scale
@@ -58,8 +58,8 @@ class POCML(torch.nn.Module):
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
         self.beta = beta # temperature parameter for softmax
 
-        self.Q = torch.nn.Parameter(torch.randn(n_states, state_dim) / np.sqrt(state_dim))
-        self.V = torch.nn.Parameter(torch.randn(n_actions, state_dim) / np.sqrt(state_dim))
+        self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states) / np.sqrt(state_dim))
+        self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions) / np.sqrt(state_dim))
         self.random_feature_map = RandomFeatureMap(state_dim, random_feature_dim, alpha=alpha)
 
         self.init_memory(memory=memory)
@@ -76,7 +76,7 @@ class POCML(torch.nn.Module):
     # Initialize empty memory, with the option to pass in pre-existing memory.
     def init_memory(self, memory=None):
         if memory is None:
-            self.M = torch.nn.Parameter(torch.zeros(self.n_obs, self.state_dim).to(torch.complex64))
+            self.M = torch.nn.Parameter(torch.zeros(self.state_dim, self.n_obs).to(torch.complex64))
         else:
             self.M = memory
 
@@ -85,7 +85,7 @@ class POCML(torch.nn.Module):
 
     # Retrieves state from memory given obs (Eq. 22).
     def get_state_from_memory(self, obs):
-        return self.M @ obs 
+        return self.M @ obs
 
     # Retrieves obs from memory given state (Eq. 21).
     def get_obs_from_memory(self, state):
@@ -100,11 +100,18 @@ class POCML(torch.nn.Module):
         self.state = new_state
         return weights
     
+    # Compute weight given a state
+    def compute_weights(self, state):
+        phi_Q = self.random_feature_map(self.Q)
+        weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real)
+        return weights
+    
     # Update state given action (pre clean-up) (Eq. 18).
     def update_state(self, action):
         v = self.V @ action
         phi_v = self.random_feature_map(v)
         self.state = self.state * phi_v
+        return self.state
     
     # Given the goal state, return the utilities for all actions (Eq. 35).
     def get_utilities(self, state):
