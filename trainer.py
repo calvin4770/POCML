@@ -207,29 +207,37 @@ class POCMLTrainer(CMLTrainer):
         eta = self.lr_Q_o * self.alpha * self.beta
         
         u = torch.eye(self.model.n_size).to(self.device)        # TODO double check if this can be optimized
-        self.model.Q += eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
+        update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
                         torch.einsum('ijk,jl->kl', self.update_tensor, u)
+        self.model.Q += update_weight
+        return update_weight
         
 
     def __update_V_o(self, oh_o_next_pred, oh_o_next_target, oh_a):
 
         eta = self.lr_V_o * self.alpha * self.beta
-
-        self.model.V += eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
+        update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
                         torch.einsum('ijk,l->kl', self.update_tensor, oh_a)
+        self.model.V += update_weight
+        return update_weight 
         
-    def __update_Q_s(self, oh_o_next_pred, oh_o_next_target):
+    def __update_Q_s(self, state_pred_bind):
 
         eta = self.lr_Q_s * self.alpha * self.beta
-        
-        pass #TODO
-        
+       
+        u = torch.eye(self.model.n_size).to(self.device)        # TODO double check if this can be optimized
+        update_weight = eta * \
+                        torch.einsum('i,ijk,jl->kl', state_pred_bind, self.update_tensor, u)
+        self.model.Q += update_weight
+        return update_weight
 
-    def __update_V_s(self, oh_o_next_pred, oh_o_next_target, oh_a):
+    def __update_V_s(self, state_pred_bind, oh_a):
 
         eta = self.lr_V_s * self.alpha * self.beta
-
-        pass # TODO 
+        update_weight = eta * \
+                        torch.einsum('i,ijk,l->kl', state_pred_bind, self.update_tensor, oh_a)
+        self.model.V += update_weight
+        return update_weight
 
 
 
