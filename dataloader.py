@@ -66,6 +66,50 @@ def construct_dead_ends_graph():
     connections = connections + connections.T
     return connections
 
+def construct_two_tunnel_graph(tunnel_length=1, middle_tunnel_length=1):
+    L = tunnel_length
+    M = middle_tunnel_length
+    num_nodes = tunnel_length * 2 + middle_tunnel_length + 4
+    connections = np.zeros((num_nodes, num_nodes)).astype(np.float32)
+
+    # first L -> upper tunnel, next L -> lower tunnel, next M -> middle tunnel
+    # then upper corner, lower corner, upper end, lower end
+
+    up_tun_head = 0
+    up_tun_end = L - 1
+    low_tun_head = L
+    low_tun_end = L * 2 - 1
+    mid_tun_head = L * 2
+    mid_tun_end = L * 2 + M - 1
+    up_corner = L * 2 + M
+    low_corner = L * 2 + M + 1
+    up_end = L * 2 + M + 2
+    low_end = L * 2 + M + 3
+
+    # construct upper and lower tunnels
+    for i in range(tunnel_length):
+        connections[up_tun_head + i, up_tun_head + i + 1] = 1
+        connections[low_tun_head + i, low_tun_head + i + 1] = 1
+
+    # construct middle tunnel
+    for i in range(middle_tunnel_length):
+        connections[mid_tun_head + i, mid_tun_head + i + 1] = 1
+
+    # connect upper corner
+    connections[up_corner, up_tun_head] = 1
+    connections[up_corner, mid_tun_head] = 1
+
+    # connect lower corner
+    connections[low_corner, low_tun_head] = 1
+    connections[low_corner, mid_tun_end] = 1
+
+    # connect ends
+    connections[up_end, up_tun_end] = 1
+    connections[low_end, low_tun_end] = 1
+
+    connections = connections + connections.T
+    return connections
+
 # function to generate a grid graph with numerical paths to move to a target
 def construct_grid_graph():
     n = 4
@@ -163,10 +207,18 @@ def edges_from_adjacency(adj_matrix):
     return edges, action_indices
 
 class GraphEnv():
-    # size -> size of random subgraph; does not apply to other environments
-    # n_items -> # possible observations
-    # unique = True -> each state is assigned a unique observation
-    def __init__(self, size=32, n_items=10, env='random', batch_size=15, num_desired_trajectories=10, device=None, unique=False):
+    def __init__(
+            self,
+            size=32, # size of random subgraph; does not apply to other environments
+            n_items=10, # number of possible observations
+            env='random', 
+            batch_size=15, 
+            num_desired_trajectories=10, 
+            device=None, 
+            unique=False, # each state is assigned a unique observation if true
+            tunnel_length = 1, # applies only to two tunnel environment
+            middle_tunnel_length = 1 # applies only to two tunnel environment
+        ):
         if env == 'random':
             self.adj_matrix = construct_random_subgraph(size, 2, 5)
         elif env == 'small world':
@@ -175,7 +227,14 @@ class GraphEnv():
             self.adj_matrix = construct_dead_ends_graph()
         elif env == 'grid':
             self.adj_matrix = construct_grid_graph()
+        elif env == 'two tunnel':
+            self.adj_matrix = construct_two_tunnel_graph(
+                tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
         
+        self.env = env
+        self.tunnel_length = tunnel_length
+        self.middle_tunnel_length = middle_tunnel_length
+
         self.adj_matrix = torch.tensor(self.adj_matrix)
         self.size = self.adj_matrix.shape[0] # number of nodes
         self.affordance, self.node_to_action_matrix,\
@@ -208,6 +267,17 @@ class GraphEnv():
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
                                          self.num_desired_trajectories, self.n_items)
         self.n_actions = len(self.dataset.action_indices)
+
+    def populate_graph_preset(self):
+        if self.env == 'two tunnel':
+            L = self.tunnel_length
+            M = self.middle_tunnel_length
+            self.items = torch.zeros(self.size)
+            self.items[L*2:L*2+M] = 1
+            self.items[L*2+M] = 2
+            self.items[L*2+M+1] = 3
+            self.items[L*2+M+2] = 4
+            self.items[L*2+M+3] = 5
         
 def node_outgoing_actions(adj_matrix):
     # This function creates several look-up tables for later computation's convecience
