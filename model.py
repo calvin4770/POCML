@@ -106,14 +106,14 @@ class POCML(torch.nn.Module):
     
     # Cleans up state to be a linear combination of the columns of \phi(Q) (Eq. 19).
     # Optional: pass in state obtained from associative memory given observation, weighted by c.
+    # c needs to be in [0, 1]
     # Returns weights in linear combination.
     def clean_up(self, state, state_from_memory=None, c=0):
         phi_Q = self.random_feature_map(self.Q.T).T
         weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real)
         if state_from_memory is not None:
             memory_weights = F.softmax(self.beta * (phi_Q.conj().T @ state_from_memory).real)
-            weights = weights + c * memory_weights
-            weights = weights / weights.sum()
+            weights = (1-c) * weights + c * memory_weights # convex combination
         new_state = phi_Q @ weights.to(torch.complex64)
         self.state = new_state
         return weights
