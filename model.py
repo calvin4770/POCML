@@ -65,6 +65,15 @@ class POCML(torch.nn.Module):
         self.init_memory(memory=memory)
         self.init_state(obs=obs)
 
+        self.t = 0
+        self.decay = 0.90
+
+    def init_time(self):
+        self.t = 0
+
+    def inc_time(self):
+        self.t += 1
+
     # Initialize state, with the option to pass in the first observation.
     def init_state(self, obs=None):
         phi_Q = self.random_feature_map(self.Q.T).T
@@ -81,6 +90,7 @@ class POCML(torch.nn.Module):
             self.M = memory
 
     def update_memory(self, state, obs):
+        self.M *= self.decay   # TODO alternative emmoru update and decay method
         self.M += torch.outer(state, obs)
 
     # Retrieves state from memory given obs (Eq. 22).
@@ -90,6 +100,9 @@ class POCML(torch.nn.Module):
     # Retrieves obs from memory given state (Eq. 21).
     def get_obs_from_memory(self, state):
         return F.softmax(self.beta * (self.M.conj().T @ state).real, dim=0)
+    
+    def get_obs_score_from_memory(self, state):
+        return self.beta * (self.M.conj().T @ state).real
     
     # Cleans up state to be a linear combination of the columns of \phi(Q) (Eq. 19).
     # Returns weights in linear combination.

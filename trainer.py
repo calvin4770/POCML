@@ -18,7 +18,7 @@ class CMLTrainer:
 
         loss_record = []
         for _ in tqdm(range(epochs), desc="Epochs"):
-            loss_record += self.train_epoch() # Concatenate the list of losses
+            loss_record.append(self.train_epoch()) # Concatenate the list of losses
         return loss_record
 
     def train_epoch(self):
@@ -49,7 +49,7 @@ class CMLTrainer:
                 loss = nn.MSELoss()(prediction_error, torch.zeros_like(prediction_error))
                 loss_record.append(loss.cpu().item())
 
-        return loss_record
+            return loss_record
 
     # Sample validation code
     # def validate_epoch(self):
@@ -92,8 +92,8 @@ class POCMLTrainer(CMLTrainer):
         # TODO D, depending on normalization ~~~ learning rate
         self.lr_Q_o = 0.1
         self.lr_V_o = 0.1
-        self.lr_Q_s = 0.1
-        self.lr_V_s = 0.1
+        self.lr_Q_s = 0.0
+        self.lr_V_s = 0.0
 
     # Create tensor reused in the update rule (30 - 33)
     def __prep_update(self, w_tilde, w_hat, oh_a):
@@ -139,7 +139,7 @@ class POCMLTrainer(CMLTrainer):
             
             for trajectory in self.train_loader:
 
-                t = 0                                       # time start at zero
+                model.init_time()
                 
                 #if model.reset_per_trajectory:             # memory have to option to reset per trajectory
                 #    model.init_memory()
@@ -198,9 +198,10 @@ class POCMLTrainer(CMLTrainer):
                     # keep the state prediction from binding at time t+1 to used in the next iteration for equation (28)
                     hd_s_pred_bind_precleanup_t = hd_s_pred_bind_precleanup
 
-                    t += 1                                  # increment time 
+                    model.inc_time()                                  # increment time 
 
-                    loss = nn.CrossEntropyLoss()(oh_o_next_pred, oh_o_next)
+                    loss = nn.CrossEntropyLoss()(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
+                    # loss = nn.CrossEntropyLoss()(oh_o_next_pred, oh_o_next)
                     # loss = nn.MSELoss()(oh_o_next_pred, oh_o_next)
                     # loss_hidden = nn.CrossEntropyLoss()(hd_s_pred_bind, hd_state_pred_mem)
                     loss_record.append(loss.cpu().item())
