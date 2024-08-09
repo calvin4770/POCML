@@ -25,7 +25,7 @@ class RandomFeatureMap(torch.nn.Module):
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.alpha = alpha # inverse length scale
-        self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim) / alpha)
+        self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim, dtype = torch.complex64) / alpha)
 
     # Applies the random feature map.
     # Input shape: [in_dim]
@@ -34,9 +34,9 @@ class RandomFeatureMap(torch.nn.Module):
     # Output shape: [..., out_dim]
     def forward(self, x):
         if len(x.shape) == 1:
-            return torch.exp(1j * self.W @ x / self.alpha)
+            return torch.exp(1j * self.W @ x.to(torch.complex64) / self.alpha)
         else:
-            return torch.exp(1j * torch.einsum("ij,...j->...i", self.W, x) / self.alpha)
+            return torch.exp(1j * torch.einsum("ij,...j->...i", self.W, x.to(torch.complex64)) / self.alpha)
 
 class POCML(torch.nn.Module):
     def __init__(self,
@@ -58,8 +58,8 @@ class POCML(torch.nn.Module):
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
         self.beta = beta # temperature parameter for softmax
 
-        self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states) / np.sqrt(state_dim))
-        self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions) / np.sqrt(state_dim))
+        self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim))
+        self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim))
         self.random_feature_map = RandomFeatureMap(state_dim, random_feature_dim, alpha=alpha)
 
         self.init_memory(memory=memory)
@@ -67,7 +67,7 @@ class POCML(torch.nn.Module):
 
     # Initialize state, with the option to pass in the first observation.
     def init_state(self, obs=None):
-        phi_Q = self.random_feature_map(self.Q)
+        phi_Q = self.random_feature_map(self.Q.T).T
         if obs is None:
             self.state = phi_Q.mean(dim=0)
         else:
@@ -76,16 +76,16 @@ class POCML(torch.nn.Module):
     # Initialize empty memory, with the option to pass in pre-existing memory.
     def init_memory(self, memory=None):
         if memory is None:
-            self.M = torch.nn.Parameter(torch.zeros(self.state_dim, self.n_obs).to(torch.complex64))
+            self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64))
         else:
             self.M = memory
 
     def update_memory(self, state, obs):
-        self.M = torch.outer(state, obs) + self.M
+        self.M += torch.outer(state, obs)
 
     # Retrieves state from memory given obs (Eq. 22).
     def get_state_from_memory(self, obs):
-        return self.M @ obs
+        return self.M @ obs.to(torch.complex64)
 
     # Retrieves obs from memory given state (Eq. 21).
     def get_obs_from_memory(self, state):
@@ -94,15 +94,15 @@ class POCML(torch.nn.Module):
     # Cleans up state to be a linear combination of the columns of \phi(Q) (Eq. 19).
     # Returns weights in linear combination.
     def clean_up(self, state):
-        phi_Q = self.random_feature_map(self.Q)
+        phi_Q = self.random_feature_map(self.Q.T).T
         weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real)
-        new_state = phi_Q @ weights
+        new_state = phi_Q @ weights.to(torch.complex64)
         self.state = new_state
         return weights
     
     # Compute weight given a state
     def compute_weights(self, state):
-        phi_Q = self.random_feature_map(self.Q)
+        phi_Q = self.random_feature_map(self.Q.T).T
         weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real)
         return weights
     
@@ -115,7 +115,7 @@ class POCML(torch.nn.Module):
     
     # Given the goal state, return the utilities for all actions (Eq. 35).
     def get_utilities(self, state):
-        phi_Q = self.random_feature_map(self.Q)
+        phi_Q = self.random_feature_map(self.Q.T).T
         p = F.softmax(self.beta * (phi_Q.conj().T @ state).real)
         return self.V.T @ (state - self.Q @ p)
 
@@ -125,3 +125,4 @@ class POCML(torch.nn.Module):
         if affordance is not None:
             u = u * affordance
         return torch.argmax(u)
+    
