@@ -159,19 +159,23 @@ class POCMLTrainer(CMLTrainer):
                     oh_o_pre = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_o_next = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_a = F.one_hot(trajectory[0,0,0], num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
-
+                    
                     # hd_s_pred_bind = model.infer_hd_state_from_binding(o_pre, oh_a)   # infer state via binding at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
                     hd_s_pred_bind_precleanup = model.update_state(oh_a)
                     
+                    #hd_state_pred_mem = self.model.infer_hd_state_from_memory(oh_o_next) # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
+                    hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
+
                     # hd_s_pred_bind = self.model.cleanup_hd_state(hd_s_pred_bind)   # clean up state, s^{hat}_{t+1}, eq (19)
-                    weights = model.clean_up(hd_s_pred_bind_precleanup) # coeff for (19); use for (23)
+                    weights = model.clean_up(
+                        hd_s_pred_bind_precleanup, 
+                        state_from_memory=hd_state_pred_mem,
+                        c = 0
+                    ) # coeff for (19); use for (23)
                     hd_s_pred_bind = model.state            
 
                     #o_next_pred = self.model_predict_obs(hd_s_pred_bind) # predict observation at time t+1, x^{hat}_{t+1} eq (21)
                     oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
-
-                    #hd_state_pred_mem = self.model.infer_hd_state_from_memory(oh_o_next) # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
-                    hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
 
                     state_pred_bind = weights                                       # (23)  u^{hat}_{t+1}
                     state_pred_mem = model.compute_weights(hd_state_pred_mem)  # (24) 
