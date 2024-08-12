@@ -11,13 +11,13 @@ import numpy as np
 def sim(x, y):
     D = x.shape[-1]
     if len(x.shape) == 1 and len(y.shape) == 1:
-        return (x @ y.conj()).real / D
+        return (x @ y.conj()).real
     elif len(x.shape) == 2 and len(y.shape) == 1:
-        return torch.einsum("ij,j->i", x, y.conj()).real / D
+        return torch.einsum("ij,j->i", x, y.conj()).real
     elif len(x.shape) == 1 and len(y.shape) == 2:
-        return torch.einsum("j,ij->i", x, y.conj()).real / D
+        return torch.einsum("j,ij->i", x, y.conj()).real
     else:
-        return torch.einsum("ri,ci->rc", x, y.conj()).real / D
+        return torch.einsum("ri,ci->rc", x, y.conj()).real
 
 class RandomFeatureMap(torch.nn.Module):
     def __init__(self, in_dim, out_dim, alpha=1):
@@ -27,6 +27,8 @@ class RandomFeatureMap(torch.nn.Module):
         self.alpha = alpha # inverse length scale
         self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim, dtype = torch.complex64) / alpha)
 
+        self.sqrt_out_dim = np.sqrt(out_dim)
+
     # Applies the random feature map.
     # Input shape: [in_dim]
     # Output shape: [out_dim], OR
@@ -34,9 +36,13 @@ class RandomFeatureMap(torch.nn.Module):
     # Output shape: [..., out_dim]
     def forward(self, x):
         if len(x.shape) == 1:
-            return torch.exp(1j * self.W @ x.to(torch.complex64) / self.alpha)
+            out = torch.exp(1j * self.W @ x.to(torch.complex64) / self.alpha) / self.sqrt_out_dim
+            #return out/torch.norm(out, p=2)
+            return out
         else:
-            return torch.exp(1j * torch.einsum("ij,...j->...i", self.W, x.to(torch.complex64)) / self.alpha)
+            out = torch.exp(1j * torch.einsum("ij,...j->...i", self.W, x.to(torch.complex64)) / self.alpha ) / self.sqrt_out_dim
+            #return out/torch.norm(out, p=2, dim=-1, keepdim=True)
+            return out
 
 class POCML(torch.nn.Module):
     def __init__(self,
