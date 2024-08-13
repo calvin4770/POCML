@@ -95,6 +95,7 @@ class POCMLTrainer(CMLTrainer):
         self.lr_Q_s = 0.0
         self.lr_V_s = 0.0
         self.lr_all = 0.032
+        self.mem_cleanup_rate = 1.0
 
     # Create tensor reused in the update rule (30 - 33)
     def __prep_update(self, w_tilde, w_hat, oh_a):
@@ -185,7 +186,7 @@ class POCMLTrainer(CMLTrainer):
                     weights = model.clean_up(
                         hd_s_pred_bind_precleanup, 
                         state_from_memory=hd_state_pred_mem,
-                        c = 1.0,
+                        c = self.mem_cleanup_rate,
                     ) # coeff for eq (19); use for eq (24)
                     hd_s_pred_bind = model.state            
 
@@ -243,7 +244,7 @@ class POCMLTrainer(CMLTrainer):
         u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
         update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
                         torch.einsum('ijk,jl->kl', self.update_tensor, u)
-        self.model.Q += update_weight
+        self.model.Q -= update_weight
         return update_weight
         
 
@@ -252,7 +253,7 @@ class POCMLTrainer(CMLTrainer):
         eta = self.lr_V_o * self.alpha * self.beta * self.lr_all
         update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
                         torch.einsum('ijk,l->kl', self.update_tensor, oh_a)
-        self.model.V += update_weight
+        self.model.V -= update_weight
         return update_weight 
         
     def __update_Q_s(self, state_pred_bind):
@@ -262,7 +263,7 @@ class POCMLTrainer(CMLTrainer):
         u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
         update_weight = eta * \
                         torch.einsum('i,ijk,jl->kl', state_pred_bind, self.update_tensor, u)
-        self.model.Q += update_weight
+        self.model.Q -= update_weight
         return update_weight
 
     def __update_V_s(self, state_pred_bind, oh_a):
@@ -270,7 +271,7 @@ class POCMLTrainer(CMLTrainer):
         eta = self.lr_V_s * self.alpha * self.beta * self.lr_all
         update_weight = eta * \
                         torch.einsum('i,ijk,l->kl', state_pred_bind, self.update_tensor, oh_a)
-        self.model.V += update_weight
+        self.model.V -= update_weight
         return update_weight
 
 
