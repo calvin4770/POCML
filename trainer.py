@@ -18,7 +18,7 @@ class CMLTrainer:
 
         loss_record = []
         for _ in tqdm(range(epochs), desc="Epochs"):
-            loss_record.append(self.train_epoch()) # Concatenate the list of losses
+            loss_record += self.train_epoch() # Concatenate the list of losses
         return loss_record
 
     def train_epoch(self):
@@ -90,11 +90,11 @@ class POCMLTrainer(CMLTrainer):
         self.beta = model.beta                                  # state prediction temperature, eq(21)
         self.alpha = model.random_feature_map.alpha             # (inverse) lengscale 
         # TODO D, depending on normalization ~~~ learning rate
-        self.lr_Q_o = 0.1
+        self.lr_Q_o = 1
         self.lr_V_o = 0.1
         self.lr_Q_s = 0.0
         self.lr_V_s = 0.0
-        self.lr_all = 0.01
+        self.lr_all = 0.032
 
     # Create tensor reused in the update rule (30 - 33)
     def __prep_update(self, w_tilde, w_hat, oh_a):
@@ -118,6 +118,7 @@ class POCMLTrainer(CMLTrainer):
     def train(self, epochs:int = 10) -> list:
 
         loss_record = []
+
         for _ in tqdm(range(epochs), desc="Epochs"):
             loss_record += self.train_epoch() # Concatenate the list of losses
         return loss_record
@@ -136,7 +137,7 @@ class POCMLTrainer(CMLTrainer):
             loss_record = []
 
             # memory transfer option/reset rate + for decay design
-            model.init_memory()                    # reset model's memory for new trajectory          
+            model.init_memory()                    # reset model's memory for new epochs        
             
             for trajectory in self.train_loader:
 
@@ -151,11 +152,23 @@ class POCMLTrainer(CMLTrainer):
                 model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
                 model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
+                # print(model.state)
+                # print(model.M.T)
+                # print(model.state.norm(p=2))
+                # print(model.M.T.norm(dim=0, p = 2))
+                print("initial state:", trajectory[0,0,0])
+                print("Print initial score", model.get_obs_score_from_memory(model.state))
+                print("Obs similarity", (model.M.T @ model.M.conj()).real)
+                #print("State difference", model.Q.T[None, :, :] model.Q)
+                print("State difference", (model.Q[:, :, None] - model.Q[:, None, :]).norm(p=2, dim=0))
+
                 hd_s_pred_bind_precleanup_t = model.state               # initialize state prediction from binding at time t, used in equation (29)
                                                                         # at t = 0, this is initialized as initial state       
 
                 # o_pre  is the observation at time t
                 for o_pre, a, o_next in trajectory[0].to(device):
+
+                    print("Time", model.t)
                     
                     oh_o_pre = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_o_next = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
@@ -163,6 +176,8 @@ class POCMLTrainer(CMLTrainer):
                     
                     # hd_s_pred_bind = model.infer_hd_state_from_binding(o_pre, oh_a)   # infer state via binding at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
                     hd_s_pred_bind_precleanup = model.update_state(oh_a)
+
+                    print("Print curent state", model.get_obs_score_from_memory(model.state))
                     
                     #hd_state_pred_mem = self.model.infer_hd_state_from_memory(oh_o_next) # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
                     hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
@@ -171,13 +186,13 @@ class POCMLTrainer(CMLTrainer):
                     weights = model.clean_up(
                         hd_s_pred_bind_precleanup, 
                         state_from_memory=hd_state_pred_mem,
-                        c = 0
+                        c = 1.0,
                     ) # coeff for eq (19); use for eq (24)
                     hd_s_pred_bind = model.state            
 
                     #o_next_pred = self.model_predict_obs(hd_s_pred_bind) # predict observation at time t+1, x^{hat}_{t+1} eq (21)
                     oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
-                    # print(model.get_obs_score_from_memory(hd_s_pred_bind))
+                    #print(model.get_obs_score_from_memory(hd_s_pred_bind))
 
                     state_pred_bind = weights                                       # eq (24)  u^{hat}_{t+1}
                     state_pred_mem = model.compute_weights(hd_state_pred_mem)  # eq (25)
@@ -192,8 +207,8 @@ class POCMLTrainer(CMLTrainer):
                     update = self.__prep_update(w_hat, w_tilde, oh_a)                       # prepare for update, eq (31-34)
 
                     # obsevation update rule, eq (31, 32)
-                    self.__update_Q_o(oh_o_next_pred, oh_o_next)                             # update observation for time t+1, x_{t+1} eq (31, 32)  
-                    self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)                       #
+                    print("dQ: ", self.__update_Q_o(oh_o_next_pred, oh_o_next))                             # update observation for time t+1, x_{t+1} eq (31, 32)  
+                    print("dV:" , self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a))                       #
 
                     # state update rule, eq (33, 34) TODO
                     self.__update_Q_s(state_pred_bind)                                      # update observation for time t+1, x_{t+1} eq (32, 33)
