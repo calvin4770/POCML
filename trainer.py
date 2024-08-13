@@ -90,7 +90,7 @@ class POCMLTrainer(CMLTrainer):
         self.beta = model.beta                                  # state prediction temperature, eq(21)
         self.alpha = model.random_feature_map.alpha             # (inverse) lengscale 
         # TODO D, depending on normalization ~~~ learning rate
-        self.lr_Q_o = 1
+        self.lr_Q_o = 1.
         self.lr_V_o = 0.1
         self.lr_Q_s = 0.0
         self.lr_V_s = 0.0
@@ -171,9 +171,9 @@ class POCMLTrainer(CMLTrainer):
 
                     print("Time", model.t)
                     
-                    oh_o_pre = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
-                    oh_o_next = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
-                    oh_a = F.one_hot(trajectory[0,0,0], num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
+                    oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
+                    oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
+                    oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
                     
                     # hd_s_pred_bind = model.infer_hd_state_from_binding(o_pre, oh_a)   # infer state via binding at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
                     hd_s_pred_bind_precleanup = model.update_state(oh_a)
@@ -197,12 +197,15 @@ class POCMLTrainer(CMLTrainer):
                     #print(model.get_obs_score_from_memory(hd_s_pred_bind))
 
                     state_pred_bind = weights                                       # eq (24)  u^{hat}_{t+1}
-                    state_pred_mem = model.compute_weights(hd_state_pred_mem)  # eq (25)
+                    state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)
 
                     # weight computation, (28) (29)
                     w_hat = model.compute_weights(hd_s_pred_bind_precleanup_t)                  # s^{hat}_t^{prime} is not computed in this iteration eq (29)
                                                                                                 # TODO option to use s^{hat}_t; 
                     w_tilde = state_pred_mem                                                    # eq (30) = (25)
+
+                    print("w^hat:   ", w_hat)
+                    print("w^tilde: ", w_tilde)
 
                     # update rule, eq (31-34)
 
@@ -210,7 +213,7 @@ class POCMLTrainer(CMLTrainer):
 
                     # obsevation update rule, eq (31, 32)
                     print("dQ: ", self.__update_Q_o(oh_o_next_pred, oh_o_next))                             # update observation for time t+1, x_{t+1} eq (31, 32)  
-                    print("dV:" , self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a))                       #
+                    print("dV(a_t):" , self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)[:,a])                       #
 
                     # state update rule, eq (33, 34) TODO
                     self.__update_Q_s(state_pred_bind)                                      # update observation for time t+1, x_{t+1} eq (32, 33)

@@ -117,7 +117,6 @@ class POCML(torch.nn.Module):
     def get_obs_from_memory(self, state):
 
         score = self.beta * (self.M.conj().T @ state).real
-        print("State scores:", F.softmax(score, dim=0))
         return F.softmax(score, dim=0)
     
     def get_obs_score_from_memory(self, state):
