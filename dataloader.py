@@ -87,12 +87,12 @@ def construct_two_tunnel_graph(tunnel_length=1, middle_tunnel_length=1):
     low_end = L * 2 + M + 3
 
     # construct upper and lower tunnels
-    for i in range(tunnel_length):
+    for i in range(tunnel_length-1):
         connections[up_tun_head + i, up_tun_head + i + 1] = 1
         connections[low_tun_head + i, low_tun_head + i + 1] = 1
 
     # construct middle tunnel
-    for i in range(middle_tunnel_length):
+    for i in range(middle_tunnel_length-1):
         connections[mid_tun_head + i, mid_tun_head + i + 1] = 1
 
     # connect upper corner
