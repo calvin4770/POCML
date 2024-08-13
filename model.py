@@ -25,8 +25,8 @@ class RandomFeatureMap(torch.nn.Module):
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.alpha = alpha                  # inverse length scale
-        self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim) / alpha, dtype = torch.float32).to(torch.complex64)
-        #self.W = torch.nn.Parameter((torch.rand(out_dim, in_dim) * 2 * np.pi).to(torch.complex64)    # sinc kernel
+        self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim).to(torch.complex64) / alpha)
+        #self.W = torch.nn.Parameter((torch.rand(out_dim, in_dim).to(torch.complex64) * 2 * np.pi))    # sinc kernel
         self.sqrt_out_dim = np.sqrt(out_dim)
 
     # Applies the random feature map.
