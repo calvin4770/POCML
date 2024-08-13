@@ -156,6 +156,7 @@ class POCMLTrainer(CMLTrainer):
                 # print(model.M.T)
                 # print(model.state.norm(p=2))
                 # print(model.M.T.norm(dim=0, p = 2))
+                print("Current Trajectory", trajectory[0])
                 print("initial state:", trajectory[0,0,0])
                 print("Print initial score", model.get_obs_score_from_memory(model.state))
                 print("Obs similarity", (model.M.T @ model.M.conj()).real)
@@ -176,8 +177,6 @@ class POCMLTrainer(CMLTrainer):
                     
                     # hd_s_pred_bind = model.infer_hd_state_from_binding(o_pre, oh_a)   # infer state via binding at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
                     hd_s_pred_bind_precleanup = model.update_state(oh_a)
-
-                    print("Print curent state", model.get_obs_score_from_memory(model.state))
                     
                     #hd_state_pred_mem = self.model.infer_hd_state_from_memory(oh_o_next) # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
                     hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
@@ -189,6 +188,9 @@ class POCMLTrainer(CMLTrainer):
                         c = 1.0,
                     ) # coeff for eq (19); use for eq (24)
                     hd_s_pred_bind = model.state            
+
+                    print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
+                    print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
 
                     #o_next_pred = self.model_predict_obs(hd_s_pred_bind) # predict observation at time t+1, x^{hat}_{t+1} eq (21)
                     oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)

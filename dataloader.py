@@ -149,7 +149,7 @@ def construct_grid_graph():
 
 # Create a dataset of trajectories
 class RandomWalkDataset(Dataset):
-    def __init__(self, adj_matrix, trajectory_length, num_trajectories, n_items):
+    def __init__(self, adj_matrix, trajectory_length, num_trajectories, n_items, items):
         self.n_items = n_items
         self.adj_matrix = adj_matrix
         self.num_trajectories = num_trajectories
@@ -159,7 +159,7 @@ class RandomWalkDataset(Dataset):
         #start_nodes = [torch.randint(0, adj_matrix.size(0), (1,)).tolist()[0]] * num_trajectories # same start node for all
         self.data = []
         for node in start_nodes:
-            items = (torch.rand(self.adj_matrix.shape[0]) * self.n_items).to(torch.int32)
+            #items = (torch.rand(self.adj_matrix.shape[0]) * self.n_items).to(torch.int32)
             trajectory = strict_random_walk(self.adj_matrix, node, self.trajectory_length, self.action_indices, items)
             self.data.append(torch.tensor([(x[0], x[1], x[2]) for x in trajectory]))
     def __len__(self):
@@ -256,7 +256,7 @@ class GraphEnv():
         self.populate_graph()
         self.gen_dataset()
 
-    # uniformly random observations
+    # uniformly random observations or identity (unique)
     def populate_graph(self):
         if self.unique:
             self.items = torch.arange(0, self.n_items)
@@ -265,7 +265,7 @@ class GraphEnv():
 
     def gen_dataset(self):
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
-                                         self.num_desired_trajectories, self.n_items)
+                                         self.num_desired_trajectories, self.n_items, self.items)
         self.n_actions = len(self.dataset.action_indices)
 
     def populate_graph_preset(self):
