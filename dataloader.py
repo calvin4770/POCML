@@ -111,9 +111,7 @@ def construct_two_tunnel_graph(tunnel_length=1, middle_tunnel_length=1):
     return connections
 
 # function to generate a grid graph with numerical paths to move to a target
-def construct_grid_graph():
-    n = 4
-    l = 5
+def construct_grid_graph(n=4, l=5):
     n_nodes = n * l + l // 2
 
     tmp_n_nodes = 0
@@ -146,6 +144,19 @@ def construct_grid_graph():
     adj[i, j] = 1
     adj += adj.T
     return adj
+
+# constructs a k-regular graph (w.r.t. outgoing edges)
+def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
+    connections = np.zeros((n_nodes, n_nodes)).astype(np.float32)
+    for i in range(n_nodes):
+        if self_connections:
+            idxs = np.arange(n_nodes)
+        else:
+            idxs = np.arange(n_nodes - 1)
+            idxs[i:] += 1
+        rand_idxs = np.random.choice(idxs, k, replace=replace)
+        connections[i, rand_idxs] = 1
+    return connections 
 
 # Create a dataset of trajectories
 class RandomWalkDataset(Dataset):
@@ -183,7 +194,7 @@ def strict_random_walk(adj_matrix, start_node, length, action_indices, items):
     return trajectory
 
 # indexing each action for a given adjacency matrix
-def edges_from_adjacency(adj_matrix):
+def edges_from_adjacency(adj_matrix, actions='unique'):
     # The input is a given random matrix's adjacency matrix
     # The outputs are:
         # edges: a list of pairs of (start node, end node) for each action
@@ -191,19 +202,36 @@ def edges_from_adjacency(adj_matrix):
             # and its corresponding value is this action's index
     # For a pure on-line algorithm, this can also be done by assigning index to unseen actions
     # during random-walk on-line
+
     n = adj_matrix.shape[0]
     edges = []
     action_idx = 0
     action_indices = {}
-    for i in range(n):
-        for j in range(i+1, n):  # Only upper triangle
-            if adj_matrix[i][j] != 0:
-                edges.append((i, j))
-                action_indices[(i, j)] = action_idx
-                action_idx += 1
-                edges.append((j, i))
-                action_indices[(j, i)] = action_idx
-                action_idx += 1
+
+    if actions == 'unique':
+        for i in range(n):
+            for j in range(i+1, n):  # Only upper triangle
+                if adj_matrix[i][j] != 0:
+                    edges.append((i, j))
+                    action_indices[(i, j)] = action_idx
+                    action_idx += 1
+                    edges.append((j, i))
+                    action_indices[(j, i)] = action_idx
+                    action_idx += 1
+    elif actions == 'regular':
+        rng = np.random.default_rng()
+        k = int(adj_matrix[0, :].sum())
+        for i in range(n):
+            idx = 0
+            coloring = rng.permutation(k)
+            for j in range(n):
+                if adj_matrix[i, j] != 0:
+                    edges.append((i, j))
+                    action_indices[(i, j)] = coloring[idx]
+                    idx += 1
+    elif actions == 'grid':
+        pass
+
     return edges, action_indices
 
 class GraphEnv():
