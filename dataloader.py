@@ -110,40 +110,25 @@ def construct_two_tunnel_graph(tunnel_length=1, middle_tunnel_length=1):
     connections = connections + connections.T
     return connections
 
-# function to generate a grid graph with numerical paths to move to a target
-def construct_grid_graph(n=4, l=5):
-    n_nodes = n * l + l // 2
-
-    tmp_n_nodes = 0
-    layer_index_bounds = []
-    for i in range(l):
-        tmp_n_nodes += n if i % 2 == 0 else n + 1
-        layer_index_bounds.append(tmp_n_nodes)
-
-    connections = []
-
-    lower_idx = 0
-    for layer_idx in range(l):
-        upper_idx = layer_index_bounds[layer_idx]
-        for i in range(lower_idx, upper_idx):
-            if i + 1 < upper_idx:
-                connections.append([i, i + 1])
-            if layer_idx + 1 < l:
-                # not last layer
-                next_upper_idx = layer_index_bounds[layer_idx+1]
-                dist1 = n if layer_idx % 2 == 0 else n + 1
-                dist2 = n + 1 if layer_idx % 2 == 0 else n
-                if upper_idx <= i + dist1 < next_upper_idx:
-                    connections.append([i, i + dist1])
-                if upper_idx <= i + dist2 < next_upper_idx:
-                    connections.append([i, i + dist2])
-        lower_idx = upper_idx
-    connections = np.array(connections)
-    i, j = connections.T
-    adj = np.zeros((n_nodes, n_nodes))
-    adj[i, j] = 1
-    adj += adj.T
-    return adj
+def construct_grid_graph(rows=5, cols=5):
+    n_nodes = rows * cols
+    connections = np.zeros((n_nodes, n_nodes)).astype(np.float32)
+    for i in range(rows):
+        for j in range(cols):
+            idx = i * rows + j
+            if i > 0:
+                up_idx = (i-1) * rows + j
+                connections[idx, up_idx] = 1
+            if i < rows - 1:
+                down_idx = (i+1) * rows + j
+                connections[idx, down_idx] = 1
+            if j > 0:
+                left_idx = i * rows + j - 1
+                connections[idx, left_idx] = 1
+            if j < cols - 1:
+                right_idx = i * rows + j + 1
+                connections[idx, right_idx] = 1
+    return connections
 
 # constructs a k-regular graph (w.r.t. outgoing edges)
 def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
@@ -230,7 +215,32 @@ def edges_from_adjacency(adj_matrix, actions='unique'):
                     action_indices[(i, j)] = coloring[idx]
                     idx += 1
     elif actions == 'grid':
-        pass
+        # compute number of rows and columns
+        cols = 0
+        for i in range(n):
+            if adj_matrix[i, i+1] == 0:
+                cols = i
+                break
+        rows = n // cols
+        for i in range(rows):
+            for j in range(cols):
+                idx = i * rows + j
+                if i > 0:
+                    up_idx = (i-1) * rows + j
+                    edges.append((idx, up_idx))
+                    action_indices[(idx, up_idx)] = 0
+                if i < rows - 1:
+                    down_idx = (i+1) * rows + j
+                    edges.append((idx, down_idx))
+                    action_indices[(idx, down_idx)] = 1
+                if j > 0:
+                    left_idx = i * rows + j - 1
+                    edges.append((idx, left_idx))
+                    action_indices[(idx, left_idx)] = 2
+                if j < cols - 1:
+                    right_idx = i * rows + j + 1
+                    edges.append((idx, right_idx))
+                    action_indices[(idx, right_idx)] = 3
 
     return edges, action_indices
 
