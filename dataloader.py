@@ -145,17 +145,15 @@ def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
 
 # Create a dataset of trajectories
 class RandomWalkDataset(Dataset):
-    def __init__(self, adj_matrix, trajectory_length, num_trajectories, n_items, items):
-        self.n_items = n_items
+    def __init__(self, adj_matrix, trajectory_length, num_trajectories, items, action_type="unique"):
         self.adj_matrix = adj_matrix
         self.num_trajectories = num_trajectories
         self.trajectory_length = trajectory_length
-        self.edges, self.action_indices = edges_from_adjacency(adj_matrix)
+        self.edges, self.action_indices = edges_from_adjacency(adj_matrix, action_type=action_type)
         start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
         #start_nodes = [torch.randint(0, adj_matrix.size(0), (1,)).tolist()[0]] * num_trajectories # same start node for all
         self.data = []
         for node in start_nodes:
-            #items = (torch.rand(self.adj_matrix.shape[0]) * self.n_items).to(torch.int32)
             trajectory = strict_random_walk(self.adj_matrix, node, self.trajectory_length, self.action_indices, items)
             self.data.append(torch.tensor([(x[0], x[1], x[2]) for x in trajectory]))
     def __len__(self):
@@ -179,7 +177,7 @@ def strict_random_walk(adj_matrix, start_node, length, action_indices, items):
     return trajectory
 
 # indexing each action for a given adjacency matrix
-def edges_from_adjacency(adj_matrix, actions='unique', args=None):
+def edges_from_adjacency(adj_matrix, action_type='unique', args=None):
     # The input is a given random matrix's adjacency matrix
     # The outputs are:
         # edges: a list of pairs of (start node, end node) for each action
@@ -193,7 +191,7 @@ def edges_from_adjacency(adj_matrix, actions='unique', args=None):
     action_idx = 0
     action_indices = {}
 
-    if actions == 'unique':
+    if action_type == 'unique':
         for i in range(n):
             for j in range(i+1, n):  # Only upper triangle
                 if adj_matrix[i][j] != 0:
@@ -203,7 +201,7 @@ def edges_from_adjacency(adj_matrix, actions='unique', args=None):
                     edges.append((j, i))
                     action_indices[(j, i)] = action_idx
                     action_idx += 1
-    elif actions == 'regular':
+    elif action_type == 'regular':
         rng = np.random.default_rng()
         k = int(adj_matrix[0, :].sum())
         for i in range(n):
@@ -214,7 +212,7 @@ def edges_from_adjacency(adj_matrix, actions='unique', args=None):
                     edges.append((i, j))
                     action_indices[(i, j)] = coloring[idx]
                     idx += 1
-    elif actions == 'grid':
+    elif action_type == 'grid':
         # compute number of rows and columns
         cols = 0
         for i in range(n):
@@ -241,7 +239,8 @@ def edges_from_adjacency(adj_matrix, actions='unique', args=None):
                     right_idx = i * rows + j + 1
                     edges.append((idx, right_idx))
                     action_indices[(idx, right_idx)] = 3
-    elif actions == 'two tunnel':
+
+    elif action_type == 'two tunnel':
         L = args["tunnel_length"]
         M = args["middle_tunnel_length"]
 
@@ -312,18 +311,17 @@ def edges_from_adjacency(adj_matrix, actions='unique', args=None):
 class GraphEnv():
     def __init__(
             self,
-            size=32, # size of random subgraph; does not apply to other environments
             n_items=10, # number of possible observations
             env='random', 
             batch_size=15, 
             num_desired_trajectories=10, 
             device=None, 
             unique=False, # each state is assigned a unique observation if true
-            tunnel_length = 1, # applies only to two tunnel environment
-            middle_tunnel_length = 1 # applies only to two tunnel environment
+            args = None
         ):
         if env == 'random':
-            self.adj_matrix = construct_random_subgraph(size, 2, 5)
+            n_nodes = args["n_nodes"]
+            self.adj_matrix = construct_random_subgraph(n_nodes, 2, 5)
         elif env == 'small world':
             self.adj_matrix = construct_small_world_graph()
         elif env == 'dead ends':
@@ -331,12 +329,18 @@ class GraphEnv():
         elif env == 'grid':
             self.adj_matrix = construct_grid_graph()
         elif env == 'two tunnel':
+            tunnel_length = args["tunnel_length"]
+            middle_tunnel_length = args["middle_tunnel_length"]
+            self.tunnel_length = tunnel_length
+            self.middle_tunnel_length = middle_tunnel_length
             self.adj_matrix = construct_two_tunnel_graph(
                 tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
+        elif env == 'regular':
+            n_nodes = args["n_nodes"]
+            k = args["k"]
+            self.adj_matrix = construct_regular_graph(n_nodes, k)
         
         self.env = env
-        self.tunnel_length = tunnel_length
-        self.middle_tunnel_length = middle_tunnel_length
 
         self.adj_matrix = torch.tensor(self.adj_matrix)
         self.size = self.adj_matrix.shape[0] # number of nodes
@@ -367,8 +371,11 @@ class GraphEnv():
             self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
 
     def gen_dataset(self):
+        action_type = "unique"
+        if self.env in ["regular", "two tunnel", "grid"]:
+            action_type = self.env
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
-                                         self.num_desired_trajectories, self.n_items, self.items)
+                                         self.num_desired_trajectories, self.items, action_type=action_type)
         self.n_actions = len(self.dataset.action_indices)
 
     def populate_graph_preset(self):
