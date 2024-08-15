@@ -145,11 +145,11 @@ def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
 
 # Create a dataset of trajectories
 class RandomWalkDataset(Dataset):
-    def __init__(self, adj_matrix, trajectory_length, num_trajectories, items, action_type="unique"):
+    def __init__(self, adj_matrix, trajectory_length, num_trajectories, items, action_type="unique", args=None):
         self.adj_matrix = adj_matrix
         self.num_trajectories = num_trajectories
         self.trajectory_length = trajectory_length
-        self.edges, self.action_indices = edges_from_adjacency(adj_matrix, action_type=action_type)
+        self.edges, self.action_indices = edges_from_adjacency(adj_matrix, action_type=action_type, args=args)
         start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
         #start_nodes = [torch.randint(0, adj_matrix.size(0), (1,)).tolist()[0]] * num_trajectories # same start node for all
         self.data = []
@@ -214,12 +214,8 @@ def edges_from_adjacency(adj_matrix, action_type='unique', args=None):
                     idx += 1
     elif action_type == 'grid':
         # compute number of rows and columns
-        cols = 0
-        for i in range(n):
-            if adj_matrix[i, i+1] == 0:
-                cols = i
-                break
-        rows = n // cols
+        rows = args["rows"]
+        cols = args["cols"]
         for i in range(rows):
             for j in range(cols):
                 idx = i * rows + j
@@ -333,8 +329,6 @@ class GraphEnv():
         elif env == 'two tunnel':
             tunnel_length = args["tunnel_length"]
             middle_tunnel_length = args["middle_tunnel_length"]
-            self.tunnel_length = tunnel_length
-            self.middle_tunnel_length = middle_tunnel_length
             self.adj_matrix = construct_two_tunnel_graph(
                 tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
         elif env == 'regular':
@@ -343,6 +337,7 @@ class GraphEnv():
             self.adj_matrix = construct_regular_graph(n_nodes, k)
         
         self.env = env
+        self.args = args
 
         self.adj_matrix = torch.tensor(self.adj_matrix)
         self.size = self.adj_matrix.shape[0] # number of nodes
@@ -377,7 +372,7 @@ class GraphEnv():
         if self.env in ["regular", "two tunnel", "grid"]:
             action_type = self.env
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
-                                         self.num_desired_trajectories, self.items, action_type=action_type)
+                                         self.num_desired_trajectories, self.items, action_type=action_type, args=self.args)
         self.n_actions = len(self.dataset.action_indices)
 
     def populate_graph_preset(self):
