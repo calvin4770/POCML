@@ -327,7 +327,9 @@ class GraphEnv():
         elif env == 'dead ends':
             self.adj_matrix = construct_dead_ends_graph()
         elif env == 'grid':
-            self.adj_matrix = construct_grid_graph()
+            rows = args["rows"]
+            cols = args["cols"]
+            self.adj_matrix = construct_grid_graph(rows, cols)
         elif env == 'two tunnel':
             tunnel_length = args["tunnel_length"]
             middle_tunnel_length = args["middle_tunnel_length"]
