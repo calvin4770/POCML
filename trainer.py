@@ -75,7 +75,8 @@ class CMLTrainer:
 
 
 class POCMLTrainer(CMLTrainer):
-    def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None):
+    def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None,
+                    lr_Q_o = 1., lr_V_o = 0.1, lr_Q_s = 0, lr_V_s = 0, lr_all = 0.32, mem_cleanup_rate = 0.0):
 
         #super.__init__(model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None)
         self.model = model
@@ -90,12 +91,12 @@ class POCMLTrainer(CMLTrainer):
         self.beta = model.beta                                  # state prediction temperature, eq(21)
         self.alpha = model.random_feature_map.alpha             # (inverse) lengscale 
         # TODO D, depending on normalization ~~~ learning rate
-        self.lr_Q_o = 1.
-        self.lr_V_o = 0.1
-        self.lr_Q_s = 0.0
-        self.lr_V_s = 0.0
-        self.lr_all = 0.032
-        self.mem_cleanup_rate = 1.0
+        self.lr_Q_o = lr_Q_o
+        self.lr_V_o = lr_V_o
+        self.lr_Q_s = lr_Q_s
+        self.lr_V_s = lr_V_s
+        self.lr_all = lr_all
+        self.mem_cleanup_rate = mem_cleanup_rate
 
     # Create tensor reused in the update rule (30 - 33)
     def __prep_update(self, w_tilde, w_hat, oh_a):
@@ -111,6 +112,9 @@ class POCMLTrainer(CMLTrainer):
         
         diff_s_squared_norm = torch.sum(diff_s ** 2, dim=-1)
         K = torch.exp(-self.alpha * diff_s_squared_norm)
+
+        print("K_ij at time \n", self.model.t, ":\n", K)
+        print("s_diff_n2:", diff_s_squared_norm)
 
         self.update_tensor = (omega * K)[:, : ,None] * diff_s
         #self.update_tensor = torch.einsum('ij,ijm->ijm', omega * K, diff_s)    # Alternatively
@@ -165,7 +169,8 @@ class POCMLTrainer(CMLTrainer):
                 print("State difference", (model.Q[:, :, None] - model.Q[:, None, :]).norm(p=2, dim=0))
 
                 hd_s_pred_bind_precleanup_t = model.state               # initialize state prediction from binding at time t, used in equation (29)
-                                                                        # at t = 0, this is initialized as initial state       
+                                                                        # at t = 0, this is initialized as initial state      
+                 
 
                 # o_pre  is the observation at time t
                 for o_pre, a, o_next in trajectory[0].to(device):
@@ -176,6 +181,7 @@ class POCMLTrainer(CMLTrainer):
                     oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
                     
+                    w_hat = model.compute_weights(model.state)
                     # hd_s_pred_bind = model.infer_hd_state_from_binding(o_pre, oh_a)   # infer state via binding at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
                     hd_s_pred_bind_precleanup = model.update_state(oh_a)
                     
@@ -201,8 +207,8 @@ class POCMLTrainer(CMLTrainer):
                     state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)
 
                     # weight computation, (28) (29)
-                    w_hat = model.compute_weights(hd_s_pred_bind_precleanup_t)                  # s^{hat}_t^{prime} is not computed in this iteration eq (29)
-                                                                                                # TODO option to use s^{hat}_t; 
+                    #w_hat = model.compute_weights(hd_s_pred_bind_precleanup_t)                  # s^{hat}_t^{prime} is not computed in this iteration eq (29)
+                    #w_hat = weights                                                                            # TODO option to use s^{hat}_t; 
                     w_tilde = state_pred_mem                                                    # eq (30) = (25)
 
                     print("w^hat:   ", w_hat)
@@ -212,9 +218,13 @@ class POCMLTrainer(CMLTrainer):
 
                     update = self.__prep_update(w_hat, w_tilde, oh_a)                       # prepare for update, eq (31-34)
 
+
+
                     # obsevation update rule, eq (31, 32)
-                    print("dQ: ", self.__update_Q_o(oh_o_next_pred, oh_o_next))                             # update observation for time t+1, x_{t+1} eq (31, 32)  
-                    print("dV(a_t):" , self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)[:,a])                       #
+                    #print("dQ: ", self.__update_Q_o(oh_o_next_pred, oh_o_next))                             # update observation for time t+1, x_{t+1} eq (31, 32)  
+                    #print("dV(a_t):" , self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)[:,a])                       #
+                    self.__update_Q_o(oh_o_next_pred, oh_o_next)
+                    self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)
 
                     # state update rule, eq (33, 34) TODO
                     self.__update_Q_s(state_pred_bind)                                      # update observation for time t+1, x_{t+1} eq (32, 33)
@@ -244,7 +254,7 @@ class POCMLTrainer(CMLTrainer):
         u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
         update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
                         torch.einsum('ijk,jl->kl', self.update_tensor, u)
-        self.model.Q -= update_weight
+        self.model.Q += update_weight
         return update_weight
         
 
@@ -253,7 +263,7 @@ class POCMLTrainer(CMLTrainer):
         eta = self.lr_V_o * self.alpha * self.beta * self.lr_all
         update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
                         torch.einsum('ijk,l->kl', self.update_tensor, oh_a)
-        self.model.V -= update_weight
+        self.model.V += update_weight
         return update_weight 
         
     def __update_Q_s(self, state_pred_bind):
@@ -263,7 +273,7 @@ class POCMLTrainer(CMLTrainer):
         u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
         update_weight = eta * \
                         torch.einsum('i,ijk,jl->kl', state_pred_bind, self.update_tensor, u)
-        self.model.Q -= update_weight
+        self.model.Q += update_weight
         return update_weight
 
     def __update_V_s(self, state_pred_bind, oh_a):
@@ -271,7 +281,7 @@ class POCMLTrainer(CMLTrainer):
         eta = self.lr_V_s * self.alpha * self.beta * self.lr_all
         update_weight = eta * \
                         torch.einsum('i,ijk,l->kl', state_pred_bind, self.update_tensor, oh_a)
-        self.model.V -= update_weight
+        self.model.V += update_weight
         return update_weight
 
 
