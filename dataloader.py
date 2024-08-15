@@ -179,7 +179,7 @@ def strict_random_walk(adj_matrix, start_node, length, action_indices, items):
     return trajectory
 
 # indexing each action for a given adjacency matrix
-def edges_from_adjacency(adj_matrix, actions='unique'):
+def edges_from_adjacency(adj_matrix, actions='unique', args=None):
     # The input is a given random matrix's adjacency matrix
     # The outputs are:
         # edges: a list of pairs of (start node, end node) for each action
@@ -241,6 +241,71 @@ def edges_from_adjacency(adj_matrix, actions='unique'):
                     right_idx = i * rows + j + 1
                     edges.append((idx, right_idx))
                     action_indices[(idx, right_idx)] = 3
+    elif actions == 'two tunnel':
+        L = args["tunnel_length"]
+        M = args["middle_tunnel_length"]
+
+        # first L -> upper tunnel, next L -> lower tunnel, next M -> middle tunnel
+        # then upper corner, lower corner, upper end, lower end
+
+        up_tun_head = 0
+        up_tun_end = L - 1
+        low_tun_head = L
+        low_tun_end = L * 2 - 1
+        mid_tun_head = L * 2
+        mid_tun_end = L * 2 + M - 1
+        up_corner = L * 2 + M
+        low_corner = L * 2 + M + 1
+        up_end = L * 2 + M + 2
+        low_end = L * 2 + M + 3
+
+        # construct upper and lower tunnels
+        for i in range(L-1):
+            edges.append((up_tun_head + i, up_tun_head + i + 1))
+            action_indices[(up_tun_head + i, up_tun_head + i + 1)] = 0 # right
+            edges.append((up_tun_head + i + 1, up_tun_head + i))
+            action_indices[(up_tun_head + i + 1, up_tun_head + i)] = 1 # left
+            edges.append((low_tun_head + i, low_tun_head + i + 1))
+            action_indices[(low_tun_head + i, low_tun_head + i + 1)] = 0 # right
+            edges.append((low_tun_head + i + 1, low_tun_head + i))
+            action_indices[(low_tun_head + i + 1, low_tun_head + i)] = 1 # left
+
+        # construct middle tunnel
+        for i in range(M-1):
+            edges.append((mid_tun_head + i, mid_tun_head + i + 1))
+            action_indices[(mid_tun_head + i, mid_tun_head + i + 1)] = 2 # down
+            edges.append((mid_tun_head + i + 1, mid_tun_head + i))
+            action_indices[(mid_tun_head + i + 1, mid_tun_head + i)] = 3 # up
+
+        # connect upper corner
+        edges.append((up_corner, up_tun_head))
+        action_indices[(up_corner, up_tun_head)] = 0 # right
+        edges.append((up_tun_head, up_corner))
+        action_indices[(up_tun_head, up_corner)] = 1 # left
+        edges.append((up_corner, mid_tun_head))
+        action_indices[(up_corner, mid_tun_head)] = 2 # down
+        edges.append((mid_tun_head, up_corner))
+        action_indices[(mid_tun_head, up_corner)] = 3 # up
+
+        # connect lower corner
+        edges.append((low_corner, low_tun_head))
+        action_indices[(low_corner, low_tun_head)] = 0 # right
+        edges.append((low_tun_head, low_corner))
+        action_indices[(low_tun_head, low_corner)] = 1 # left
+        edges.append((low_corner, mid_tun_end))
+        action_indices[(low_corner, mid_tun_end)] = 3 # up
+        edges.append((mid_tun_end, low_corner))
+        action_indices[(mid_tun_end, low_corner)] = 2 # down
+
+        # connect ends
+        edges.append((up_end, up_tun_end))
+        action_indices[(up_end, up_tun_end)] = 0 # right
+        edges.append((up_tun_end, up_end))
+        action_indices[(up_tun_end, up_end)] = 1 # left
+        edges.append((low_end, low_tun_end))
+        action_indices[(low_end, low_tun_end)] = 0 # right
+        edges.append((low_tun_end, low_end))
+        action_indices[(low_tun_end, low_end)] = 1 # left
 
     return edges, action_indices
 
