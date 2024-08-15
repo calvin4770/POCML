@@ -179,7 +179,7 @@ def strict_random_walk(adj_matrix, start_node, length, action_indices, items):
     return trajectory
 
 # indexing each action for a given adjacency matrix
-def edges_from_adjacency(adj_matrix, actions='unique'):
+def edges_from_adjacency(adj_matrix, action_type):
     # The input is a given random matrix's adjacency matrix
     # The outputs are:
         # edges: a list of pairs of (start node, end node) for each action
@@ -193,7 +193,7 @@ def edges_from_adjacency(adj_matrix, actions='unique'):
     action_idx = 0
     action_indices = {}
 
-    if actions == 'unique':
+    if action_type == 'unique':
         for i in range(n):
             for j in range(i+1, n):  # Only upper triangle
                 if adj_matrix[i][j] != 0:
@@ -203,7 +203,7 @@ def edges_from_adjacency(adj_matrix, actions='unique'):
                     edges.append((j, i))
                     action_indices[(j, i)] = action_idx
                     action_idx += 1
-    elif actions == 'regular':
+    elif action_type == 'regular':
         rng = np.random.default_rng()
         k = int(adj_matrix[0, :].sum())
         for i in range(n):
@@ -214,7 +214,7 @@ def edges_from_adjacency(adj_matrix, actions='unique'):
                     edges.append((i, j))
                     action_indices[(i, j)] = coloring[idx]
                     idx += 1
-    elif actions == 'grid':
+    elif action_type == 'grid':
         # compute number of rows and columns
         cols = 0
         for i in range(n):
@@ -250,6 +250,7 @@ class GraphEnv():
             size=32, # size of random subgraph; does not apply to other environments
             n_items=10, # number of possible observations
             env='random', 
+            action_type='unique', # 'unique' or 'regular' or 'grid'
             batch_size=15, 
             num_desired_trajectories=10, 
             device=None, 
@@ -268,15 +269,18 @@ class GraphEnv():
         elif env == 'two tunnel':
             self.adj_matrix = construct_two_tunnel_graph(
                 tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
+        elif env == 'regular':
+            self.adj_matrix = construct_regular_graph(size, 3)
         
         self.env = env
         self.tunnel_length = tunnel_length
         self.middle_tunnel_length = middle_tunnel_length
+        self.action_type = action_type
 
         self.adj_matrix = torch.tensor(self.adj_matrix)
         self.size = self.adj_matrix.shape[0] # number of nodes
         self.affordance, self.node_to_action_matrix,\
-        self.action_to_node = node_outgoing_actions(self.adj_matrix)
+        self.action_to_node = node_outgoing_actions(self.adj_matrix, action_type=self.action_type)
         
         self.affordance = {k: torch.tensor(v).to(device)\
                            for k, v in self.affordance.items()}
@@ -317,9 +321,9 @@ class GraphEnv():
             self.items[L*2+M+2] = 4
             self.items[L*2+M+3] = 5
         
-def node_outgoing_actions(adj_matrix):
+def node_outgoing_actions(adj_matrix, action_type):
     # This function creates several look-up tables for later computation's convecience
-    edges, action_indices = edges_from_adjacency(adj_matrix)
+    edges, action_indices = edges_from_adjacency(adj_matrix, action_type)
     # Use an action index as a key, retrieve its (start node, end node)
     inverse_action_indices = {v: k for k, v in action_indices.items()}
     # Given a node as a key, retrieve all of its available outgoing actions' indexes.
