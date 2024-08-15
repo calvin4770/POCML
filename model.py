@@ -105,7 +105,7 @@ class POCML(torch.nn.Module):
                 self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64))
             else:
                 self.M = memory
-        else：
+        else:
             self.M = self.random_feature_map(self.Q.T).T # == phi(q)
 
     def update_memory(self, state, obs):
