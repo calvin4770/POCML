@@ -110,42 +110,38 @@ def construct_two_tunnel_graph(tunnel_length=1, middle_tunnel_length=1):
     connections = connections + connections.T
     return connections
 
-# function to generate a grid graph with numerical paths to move to a target
-def construct_grid_graph():
-    n = 4
-    l = 5
-    n_nodes = n * l + l // 2
+def construct_grid_graph(rows=5, cols=5):
+    n_nodes = rows * cols
+    connections = np.zeros((n_nodes, n_nodes)).astype(np.float32)
+    for i in range(rows):
+        for j in range(cols):
+            idx = i * rows + j
+            if i > 0:
+                up_idx = (i-1) * rows + j
+                connections[idx, up_idx] = 1
+            if i < rows - 1:
+                down_idx = (i+1) * rows + j
+                connections[idx, down_idx] = 1
+            if j > 0:
+                left_idx = i * rows + j - 1
+                connections[idx, left_idx] = 1
+            if j < cols - 1:
+                right_idx = i * rows + j + 1
+                connections[idx, right_idx] = 1
+    return connections
 
-    tmp_n_nodes = 0
-    layer_index_bounds = []
-    for i in range(l):
-        tmp_n_nodes += n if i % 2 == 0 else n + 1
-        layer_index_bounds.append(tmp_n_nodes)
-
-    connections = []
-
-    lower_idx = 0
-    for layer_idx in range(l):
-        upper_idx = layer_index_bounds[layer_idx]
-        for i in range(lower_idx, upper_idx):
-            if i + 1 < upper_idx:
-                connections.append([i, i + 1])
-            if layer_idx + 1 < l:
-                # not last layer
-                next_upper_idx = layer_index_bounds[layer_idx+1]
-                dist1 = n if layer_idx % 2 == 0 else n + 1
-                dist2 = n + 1 if layer_idx % 2 == 0 else n
-                if upper_idx <= i + dist1 < next_upper_idx:
-                    connections.append([i, i + dist1])
-                if upper_idx <= i + dist2 < next_upper_idx:
-                    connections.append([i, i + dist2])
-        lower_idx = upper_idx
-    connections = np.array(connections)
-    i, j = connections.T
-    adj = np.zeros((n_nodes, n_nodes))
-    adj[i, j] = 1
-    adj += adj.T
-    return adj
+# constructs a k-regular graph (w.r.t. outgoing edges)
+def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
+    connections = np.zeros((n_nodes, n_nodes)).astype(np.float32)
+    for i in range(n_nodes):
+        if self_connections:
+            idxs = np.arange(n_nodes)
+        else:
+            idxs = np.arange(n_nodes - 1)
+            idxs[i:] += 1
+        rand_idxs = np.random.choice(idxs, k, replace=replace)
+        connections[i, rand_idxs] = 1
+    return connections 
 
 # Create a dataset of trajectories
 class RandomWalkDataset(Dataset):
@@ -183,7 +179,7 @@ def strict_random_walk(adj_matrix, start_node, length, action_indices, items):
     return trajectory
 
 # indexing each action for a given adjacency matrix
-def edges_from_adjacency(adj_matrix):
+def edges_from_adjacency(adj_matrix, actions='unique'):
     # The input is a given random matrix's adjacency matrix
     # The outputs are:
         # edges: a list of pairs of (start node, end node) for each action
@@ -191,19 +187,61 @@ def edges_from_adjacency(adj_matrix):
             # and its corresponding value is this action's index
     # For a pure on-line algorithm, this can also be done by assigning index to unseen actions
     # during random-walk on-line
+
     n = adj_matrix.shape[0]
     edges = []
     action_idx = 0
     action_indices = {}
-    for i in range(n):
-        for j in range(i+1, n):  # Only upper triangle
-            if adj_matrix[i][j] != 0:
-                edges.append((i, j))
-                action_indices[(i, j)] = action_idx
-                action_idx += 1
-                edges.append((j, i))
-                action_indices[(j, i)] = action_idx
-                action_idx += 1
+
+    if actions == 'unique':
+        for i in range(n):
+            for j in range(i+1, n):  # Only upper triangle
+                if adj_matrix[i][j] != 0:
+                    edges.append((i, j))
+                    action_indices[(i, j)] = action_idx
+                    action_idx += 1
+                    edges.append((j, i))
+                    action_indices[(j, i)] = action_idx
+                    action_idx += 1
+    elif actions == 'regular':
+        rng = np.random.default_rng()
+        k = int(adj_matrix[0, :].sum())
+        for i in range(n):
+            idx = 0
+            coloring = rng.permutation(k)
+            for j in range(n):
+                if adj_matrix[i, j] != 0:
+                    edges.append((i, j))
+                    action_indices[(i, j)] = coloring[idx]
+                    idx += 1
+    elif actions == 'grid':
+        # compute number of rows and columns
+        cols = 0
+        for i in range(n):
+            if adj_matrix[i, i+1] == 0:
+                cols = i
+                break
+        rows = n // cols
+        for i in range(rows):
+            for j in range(cols):
+                idx = i * rows + j
+                if i > 0:
+                    up_idx = (i-1) * rows + j
+                    edges.append((idx, up_idx))
+                    action_indices[(idx, up_idx)] = 0
+                if i < rows - 1:
+                    down_idx = (i+1) * rows + j
+                    edges.append((idx, down_idx))
+                    action_indices[(idx, down_idx)] = 1
+                if j > 0:
+                    left_idx = i * rows + j - 1
+                    edges.append((idx, left_idx))
+                    action_indices[(idx, left_idx)] = 2
+                if j < cols - 1:
+                    right_idx = i * rows + j + 1
+                    edges.append((idx, right_idx))
+                    action_indices[(idx, right_idx)] = 3
+
     return edges, action_indices
 
 class GraphEnv():
