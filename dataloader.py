@@ -145,17 +145,15 @@ def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
 
 # Create a dataset of trajectories
 class RandomWalkDataset(Dataset):
-    def __init__(self, adj_matrix, trajectory_length, num_trajectories, n_items, items):
-        self.n_items = n_items
+    def __init__(self, adj_matrix, trajectory_length, num_trajectories, items, action_type="unique"):
         self.adj_matrix = adj_matrix
         self.num_trajectories = num_trajectories
         self.trajectory_length = trajectory_length
-        self.edges, self.action_indices = edges_from_adjacency(adj_matrix)
+        self.edges, self.action_indices = edges_from_adjacency(adj_matrix, action_type=action_type)
         start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
         #start_nodes = [torch.randint(0, adj_matrix.size(0), (1,)).tolist()[0]] * num_trajectories # same start node for all
         self.data = []
         for node in start_nodes:
-            #items = (torch.rand(self.adj_matrix.shape[0]) * self.n_items).to(torch.int32)
             trajectory = strict_random_walk(self.adj_matrix, node, self.trajectory_length, self.action_indices, items)
             self.data.append(torch.tensor([(x[0], x[1], x[2]) for x in trajectory]))
     def __len__(self):
@@ -179,7 +177,7 @@ def strict_random_walk(adj_matrix, start_node, length, action_indices, items):
     return trajectory
 
 # indexing each action for a given adjacency matrix
-def edges_from_adjacency(adj_matrix, action_type):
+def edges_from_adjacency(adj_matrix, action_type='unique', args=None):
     # The input is a given random matrix's adjacency matrix
     # The outputs are:
         # edges: a list of pairs of (start node, end node) for each action
@@ -242,24 +240,88 @@ def edges_from_adjacency(adj_matrix, action_type):
                     edges.append((idx, right_idx))
                     action_indices[(idx, right_idx)] = 3
 
+    elif action_type == 'two tunnel':
+        L = args["tunnel_length"]
+        M = args["middle_tunnel_length"]
+
+        # first L -> upper tunnel, next L -> lower tunnel, next M -> middle tunnel
+        # then upper corner, lower corner, upper end, lower end
+
+        up_tun_head = 0
+        up_tun_end = L - 1
+        low_tun_head = L
+        low_tun_end = L * 2 - 1
+        mid_tun_head = L * 2
+        mid_tun_end = L * 2 + M - 1
+        up_corner = L * 2 + M
+        low_corner = L * 2 + M + 1
+        up_end = L * 2 + M + 2
+        low_end = L * 2 + M + 3
+
+        # construct upper and lower tunnels
+        for i in range(L-1):
+            edges.append((up_tun_head + i, up_tun_head + i + 1))
+            action_indices[(up_tun_head + i, up_tun_head + i + 1)] = 0 # right
+            edges.append((up_tun_head + i + 1, up_tun_head + i))
+            action_indices[(up_tun_head + i + 1, up_tun_head + i)] = 1 # left
+            edges.append((low_tun_head + i, low_tun_head + i + 1))
+            action_indices[(low_tun_head + i, low_tun_head + i + 1)] = 0 # right
+            edges.append((low_tun_head + i + 1, low_tun_head + i))
+            action_indices[(low_tun_head + i + 1, low_tun_head + i)] = 1 # left
+
+        # construct middle tunnel
+        for i in range(M-1):
+            edges.append((mid_tun_head + i, mid_tun_head + i + 1))
+            action_indices[(mid_tun_head + i, mid_tun_head + i + 1)] = 2 # down
+            edges.append((mid_tun_head + i + 1, mid_tun_head + i))
+            action_indices[(mid_tun_head + i + 1, mid_tun_head + i)] = 3 # up
+
+        # connect upper corner
+        edges.append((up_corner, up_tun_head))
+        action_indices[(up_corner, up_tun_head)] = 0 # right
+        edges.append((up_tun_head, up_corner))
+        action_indices[(up_tun_head, up_corner)] = 1 # left
+        edges.append((up_corner, mid_tun_head))
+        action_indices[(up_corner, mid_tun_head)] = 2 # down
+        edges.append((mid_tun_head, up_corner))
+        action_indices[(mid_tun_head, up_corner)] = 3 # up
+
+        # connect lower corner
+        edges.append((low_corner, low_tun_head))
+        action_indices[(low_corner, low_tun_head)] = 0 # right
+        edges.append((low_tun_head, low_corner))
+        action_indices[(low_tun_head, low_corner)] = 1 # left
+        edges.append((low_corner, mid_tun_end))
+        action_indices[(low_corner, mid_tun_end)] = 3 # up
+        edges.append((mid_tun_end, low_corner))
+        action_indices[(mid_tun_end, low_corner)] = 2 # down
+
+        # connect ends
+        edges.append((up_end, up_tun_end))
+        action_indices[(up_end, up_tun_end)] = 0 # right
+        edges.append((up_tun_end, up_end))
+        action_indices[(up_tun_end, up_end)] = 1 # left
+        edges.append((low_end, low_tun_end))
+        action_indices[(low_end, low_tun_end)] = 0 # right
+        edges.append((low_tun_end, low_end))
+        action_indices[(low_tun_end, low_end)] = 1 # left
+
     return edges, action_indices
 
 class GraphEnv():
     def __init__(
             self,
-            size=32, # size of random subgraph; does not apply to other environments
             n_items=10, # number of possible observations
             env='random', 
-            action_type='unique', # 'unique' or 'regular' or 'grid'
             batch_size=15, 
             num_desired_trajectories=10, 
             device=None, 
             unique=False, # each state is assigned a unique observation if true
-            tunnel_length = 1, # applies only to two tunnel environment
-            middle_tunnel_length = 1 # applies only to two tunnel environment
+            args = None
         ):
         if env == 'random':
-            self.adj_matrix = construct_random_subgraph(size, 2, 5)
+            n_nodes = args["n_nodes"]
+            self.adj_matrix = construct_random_subgraph(n_nodes, 2, 5)
         elif env == 'small world':
             self.adj_matrix = construct_small_world_graph()
         elif env == 'dead ends':
@@ -267,20 +329,23 @@ class GraphEnv():
         elif env == 'grid':
             self.adj_matrix = construct_grid_graph()
         elif env == 'two tunnel':
+            tunnel_length = args["tunnel_length"]
+            middle_tunnel_length = args["middle_tunnel_length"]
+            self.tunnel_length = tunnel_length
+            self.middle_tunnel_length = middle_tunnel_length
             self.adj_matrix = construct_two_tunnel_graph(
                 tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
         elif env == 'regular':
-            self.adj_matrix = construct_regular_graph(size, 3)
+            n_nodes = args["n_nodes"]
+            k = args["k"]
+            self.adj_matrix = construct_regular_graph(n_nodes, k)
         
         self.env = env
-        self.tunnel_length = tunnel_length
-        self.middle_tunnel_length = middle_tunnel_length
-        self.action_type = action_type
 
         self.adj_matrix = torch.tensor(self.adj_matrix)
         self.size = self.adj_matrix.shape[0] # number of nodes
         self.affordance, self.node_to_action_matrix,\
-        self.action_to_node = node_outgoing_actions(self.adj_matrix, action_type=self.action_type)
+        self.action_to_node = node_outgoing_actions(self.adj_matrix)
         
         self.affordance = {k: torch.tensor(v).to(device)\
                            for k, v in self.affordance.items()}
@@ -306,8 +371,11 @@ class GraphEnv():
             self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
 
     def gen_dataset(self):
+        action_type = "unique"
+        if self.env in ["regular", "two tunnel", "grid"]:
+            action_type = self.env
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
-                                         self.num_desired_trajectories, self.n_items, self.items)
+                                         self.num_desired_trajectories, self.items, action_type=action_type)
         self.n_actions = len(self.dataset.action_indices)
 
     def populate_graph_preset(self):
@@ -321,9 +389,9 @@ class GraphEnv():
             self.items[L*2+M+2] = 4
             self.items[L*2+M+3] = 5
         
-def node_outgoing_actions(adj_matrix, action_type):
+def node_outgoing_actions(adj_matrix):
     # This function creates several look-up tables for later computation's convecience
-    edges, action_indices = edges_from_adjacency(adj_matrix, action_type)
+    edges, action_indices = edges_from_adjacency(adj_matrix)
     # Use an action index as a key, retrieve its (start node, end node)
     inverse_action_indices = {v: k for k, v in action_indices.items()}
     # Given a node as a key, retrieve all of its available outgoing actions' indexes.

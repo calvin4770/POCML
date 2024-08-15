@@ -59,6 +59,7 @@ class POCML(torch.nn.Module):
                  random_feature_dim,
                  alpha=1,
                  beta=1,
+                 decay=0.9,
                  memory=None,
                  obs=None
     ):
@@ -69,6 +70,7 @@ class POCML(torch.nn.Module):
         self.state_dim = state_dim # dimension of state space
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
         self.beta = beta # temperature parameter for softmax
+        self.decay = decay # decay parameter for memory
 
         self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim))
         self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim))
@@ -78,7 +80,6 @@ class POCML(torch.nn.Module):
         self.init_state(obs=obs)
 
         self.t = 0
-        self.decay = 0.9
 
     def init_time(self):
         self.t = 0
