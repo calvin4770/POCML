@@ -339,10 +339,14 @@ class GraphEnv():
         self.env = env
         self.args = args
 
+        self.action_type = "unique"
+        if self.env in ["regular", "two tunnel", "grid"]:
+            self.action_type = self.env
+
         self.adj_matrix = torch.tensor(self.adj_matrix)
         self.size = self.adj_matrix.shape[0] # number of nodes
         self.affordance, self.node_to_action_matrix,\
-        self.action_to_node = node_outgoing_actions(self.adj_matrix)
+        self.action_to_node = node_outgoing_actions(self.adj_matrix, action_type=self.action_type, args=self.args)
         
         self.affordance = {k: torch.tensor(v).to(device)\
                            for k, v in self.affordance.items()}
@@ -368,11 +372,8 @@ class GraphEnv():
             self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
 
     def gen_dataset(self):
-        action_type = "unique"
-        if self.env in ["regular", "two tunnel", "grid"]:
-            action_type = self.env
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
-                                         self.num_desired_trajectories, self.items, action_type=action_type, args=self.args)
+                                         self.num_desired_trajectories, self.items, action_type=self.action_type, args=self.args)
         self.n_actions = len(self.dataset.action_indices)
 
     def populate_graph_preset(self):
@@ -386,9 +387,9 @@ class GraphEnv():
             self.items[L*2+M+2] = 4
             self.items[L*2+M+3] = 5
         
-def node_outgoing_actions(adj_matrix):
+def node_outgoing_actions(adj_matrix, action_type="unique", args=None):
     # This function creates several look-up tables for later computation's convecience
-    edges, action_indices = edges_from_adjacency(adj_matrix)
+    edges, action_indices = edges_from_adjacency(adj_matrix, action_type=action_type, args=args)
     # Use an action index as a key, retrieve its (start node, end node)
     inverse_action_indices = {v: k for k, v in action_indices.items()}
     # Given a node as a key, retrieve all of its available outgoing actions' indexes.
