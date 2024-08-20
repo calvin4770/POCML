@@ -59,6 +59,8 @@ class POCML(torch.nn.Module):
                  random_feature_dim,
                  alpha=1,
                  beta=1,
+                 memory_bypass=False,
+                 decay=0.9,
                  memory=None,
                  obs=None
     ):
@@ -69,6 +71,8 @@ class POCML(torch.nn.Module):
         self.state_dim = state_dim # dimension of state space
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
         self.beta = beta # temperature parameter for softmax
+        self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
+        self.decay = decay # decay parameter for memory
 
         self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim))
         self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim))
@@ -78,7 +82,6 @@ class POCML(torch.nn.Module):
         self.init_state(obs=obs)
 
         self.t = 0
-        self.decay = 0.9
 
     def init_time(self):
         self.t = 0
@@ -96,18 +99,22 @@ class POCML(torch.nn.Module):
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
     def init_memory(self, memory=None):
-        # if memory is None:
-        #     self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64))
-        # else:
-        #     self.M = memory
 
-        self.M = phi_Q = self.random_feature_map(self.Q.T).T
+        if not self.memory_bypass:
+            if memory is None:
+                self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64))
+            else:
+                self.M = memory
+        else:
+            self.M = self.random_feature_map(self.Q.T).T # == phi(q)
 
     def update_memory(self, state, obs):
-        # self.M *= self.decay                # TODO alternative emmoru update and decay method
-        # self.M += torch.outer(state, obs)
 
-        self.M = phi_Q = self.random_feature_map(self.Q.T).T
+        if not self.memory_bypass:
+            self.M *= self.decay                # TODO alternative emmoru update and decay method
+            self.M += torch.outer(state, obs)
+        else:
+            self.M = self.random_feature_map(self.Q.T).T # == phi(q)
 
     # Retrieves state from memory given obs (Eq. 22).
     def get_state_from_memory(self, obs):

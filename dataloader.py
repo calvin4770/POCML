@@ -326,14 +326,16 @@ class GraphEnv():
             rows = args["rows"]
             cols = args["cols"]
             self.adj_matrix = construct_grid_graph(rows, cols)
+            self.n_actions = 4
         elif env == 'two tunnel':
             tunnel_length = args["tunnel_length"]
             middle_tunnel_length = args["middle_tunnel_length"]
             self.adj_matrix = construct_two_tunnel_graph(
                 tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
+            # TODO: assignc number of actions
         elif env == 'regular':
             n_nodes = args["n_nodes"]
-            k = args["k"]
+            self.n_action = k = args["k"]
             self.adj_matrix = construct_regular_graph(n_nodes, k)
         
         self.env = env
@@ -372,9 +374,18 @@ class GraphEnv():
             self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
 
     def gen_dataset(self):
+
+        action_type = "unique"
+        if self.env in ["regular", "two tunnel", "grid"]:
+            action_type = self.env
+            
         self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
-                                         self.num_desired_trajectories, self.items, action_type=self.action_type, args=self.args)
-        self.n_actions = len(self.dataset.action_indices)
+                                         self.num_desired_trajectories, self.items, action_type=action_type, args=self.args)
+        if self.env not in ["regular", "two tunnel", "grid"]:
+            self.n_actions = len(self.dataset.action_indices)
+        
+         
+
 
     def populate_graph_preset(self):
         if self.env == 'two tunnel':
