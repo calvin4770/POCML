@@ -379,9 +379,6 @@ class GraphEnv():
                                          self.num_desired_trajectories, self.items, action_type=action_type, args=self.args)
         if self.env not in ["regular", "two tunnel", "grid"]:
             self.n_actions = len(self.dataset.action_indices)
-        
-         
-
 
     def populate_graph_preset(self):
         if self.env == 'two tunnel':

@@ -26,7 +26,7 @@ class RandomFeatureMap(torch.nn.Module):
         self.out_dim = out_dim
         self.alpha = alpha                  # inverse length scale
         self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim).to(torch.complex64) / alpha)
-        #self.W = torch.nn.Parameter((torch.rand(out_dim, in_dim).to(torch.complex64) * 2 * np.pi))    # sinc kernel
+        #self.W = torch.nn.Parameter((torch.rand(out_dim, in_dim).to(torch.complex64) * 2 * np.pi / alpha))    # sinc kernel
         self.sqrt_out_dim = np.sqrt(out_dim)
 
     # Applies the random feature map.
@@ -111,7 +111,7 @@ class POCML(torch.nn.Module):
     def update_memory(self, state, obs):
 
         if not self.memory_bypass:
-            self.M *= self.decay                # TODO alternative emmoru update and decay method
+            self.M *= self.decay                # TODO alternative memory update and decay method
             self.M += torch.outer(state, obs)
         else:
             self.M = self.random_feature_map(self.Q.T).T # == phi(q)
@@ -122,7 +122,6 @@ class POCML(torch.nn.Module):
 
     # Retrieves obs from memory given state (Eq. 21).
     def get_obs_from_memory(self, state):
-
         score = self.beta * (self.M.conj().T @ state).real
         return F.softmax(score, dim=0)
     
