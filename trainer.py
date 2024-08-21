@@ -103,7 +103,7 @@ class POCMLTrainer(CMLTrainer):
         
         model = self.model 
         Q = model.Q
-        
+
         omega = torch.einsum('ki,j->ijk', w_tilde, w_hat)                 # omega_ijk = w_tilde_{ki} * w_hat_{j}
 
         v_t = model.V @ oh_a                                # v_t []
@@ -117,6 +117,7 @@ class POCMLTrainer(CMLTrainer):
 
         # Compute exact K 
         K = torch.exp(-self.alpha * diff_s_squared_norm)
+        # K = torch.ones(diff_s_squared_norm.shape)
         # Soft-collapsing 
         # K = F.softmax(K * 10, dim=0)
 
@@ -126,10 +127,10 @@ class POCMLTrainer(CMLTrainer):
         self.update_tensor = torch.einsum('j,ij,ijm->ijm', w_hat, K, diff_s)
 
         u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
-        self.Z_q = -1 * torch.einsum('ki,ijm,ni->kmn', w_tilde, self.update_tensor, u)
-        self.Z_v = torch.einsum('ki,ijm,n->kmn', w_tilde, self.update_tensor, oh_a)
+        self.Z_q = -1 * torch.einsum('ik,ijm,in->kmn', w_tilde, self.update_tensor, u)
+        self.Z_v = torch.einsum('ik,ijm,n->kmn', w_tilde, self.update_tensor, oh_a)
 
-        self.W_q = -1 * torch.einsum('ijm,ni->imn', self.update_tensor, u)
+        self.W_q = -1 * torch.einsum('ijm,in->imn', self.update_tensor, u)
         self.W_v = torch.einsum('ijm,n->imn', self.update_tensor, oh_a)
 
 
@@ -157,7 +158,7 @@ class POCMLTrainer(CMLTrainer):
             # memory transfer option/reset rate + for decay design
             model.init_memory()                    # reset model's memory for new epochs        
             
-            for trajectory in self.train_loader:
+            for tt, trajectory in enumerate(self.train_loader):
 
                 model.init_time()
                 
@@ -170,12 +171,13 @@ class POCMLTrainer(CMLTrainer):
                 model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
                 model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
-                print("Current Trajectory", trajectory[0])
-                print("initial state:", trajectory[0,0,0])
-                print("Print initial score", model.get_obs_score_from_memory(model.state))
-                print("Obs similarity\n", (model.M.T @ model.M.conj()).real)
-                print("Action difference\n", (model.V[:, :, None] - model.V[:, None, :]).norm(p=2, dim=0))
-                print("State  difference\n", (model.Q[:, :, None] - model.Q[:, None, :]).norm(p=2, dim=0))
+                if tt == 0: 
+                    print("Current Trajectory", trajectory[0])
+                    print("initial state:", trajectory[0,0,0])
+                    print("Print initial score", model.get_obs_score_from_memory(model.state))
+                    print("Obs similarity\n", (model.M.T @ model.M.conj()).real)
+                    print("Action difference\n", (model.V[:, :, None] - model.V[:, None, :]).norm(p=2, dim=0))
+                    print("State  difference\n", (model.Q[:, :, None] - model.Q[:, None, :]).norm(p=2, dim=0))
                 
 
                 hd_s_pred_bind_precleanup_t = model.state               # initialize state prediction from binding at time t, used in equation (29)
@@ -185,7 +187,8 @@ class POCMLTrainer(CMLTrainer):
                 # o_pre  is the observation at time t
                 for o_pre, a, o_next in trajectory[0].to(device):
 
-                    print("Time", model.t)
+                    if tt == 0: 
+                        print("Time", model.t)
                     
                     oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
@@ -221,10 +224,12 @@ class POCMLTrainer(CMLTrainer):
                     # w_hat = weights                                                             # TODO option to use s^{hat}_t; 
                     # w_tilde = state_pred_mem                                                    # deprecated : eq (32) = (25)
 
-                    print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
-                    print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
-                    print("w^hat:   ", w_hat)
-                    print("w^tilde: ", w_tilde)
+                    if tt == 0: 
+                        print("oh_o_next_pred", oh_o_next_pred)
+                        print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
+                        print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
+                        print("w^hat:   ", w_hat)
+                        print("w^tilde: ", w_tilde)
 
                     # update rule, eq (31-34)
                     update = self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
@@ -245,6 +250,8 @@ class POCMLTrainer(CMLTrainer):
                     # keep the state prediction from binding at time t+1 to used in the next iteration for equation (29)
                     hd_s_pred_bind_precleanup_t = hd_s_pred_bind_precleanup
 
+                    model.normalize_action() # normalize action
+
                     model.inc_time()                                  # increment time 
 
                     loss = nn.CrossEntropyLoss()(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
@@ -252,6 +259,7 @@ class POCMLTrainer(CMLTrainer):
                     # loss = nn.MSELoss()(oh_o_next_pred, oh_o_next)
                     # loss_hidden = nn.CrossEntropyLoss()(hd_s_pred_bind, hd_state_pred_mem)
                     loss_record.append(loss.cpu().item())
+
 
         return loss_record
     

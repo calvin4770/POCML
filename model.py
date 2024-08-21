@@ -236,3 +236,7 @@ class POCML(torch.nn.Module):
 
         return action_to_node[action_idx][1].item(), action_idx
     
+    def normalize_action(self):
+        self.V /= torch.norm(self.V, p=2, dim=0, keepdim=True)
+        return self.V
+    
