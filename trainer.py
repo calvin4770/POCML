@@ -76,7 +76,7 @@ class CMLTrainer:
 
 class POCMLTrainer(CMLTrainer):
     def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None,
-                    lr_Q_o = 1., lr_V_o = 0.1, lr_Q_s = 0, lr_V_s = 0, lr_all = 0.32, mem_cleanup_rate = 0.0):
+                    lr_Q_o = 1., lr_V_o = 0.1, lr_Q_s = 0, lr_V_s = 0, lr_all = 0.32, mem_cleanup_rate = 0.0, normalize = False):
 
         #super.__init__(model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None)
         self.model = model
@@ -96,6 +96,7 @@ class POCMLTrainer(CMLTrainer):
         self.lr_V_s = lr_V_s
         self.lr_all = lr_all
         self.mem_cleanup_rate = mem_cleanup_rate
+        self.normalize = normalize
 
     # # Create tensor reused in the update rule (30 - 33)
     # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
@@ -176,8 +177,8 @@ class POCMLTrainer(CMLTrainer):
                     print("initial state:", trajectory[0,0,0])
                     print("Print initial score", model.get_obs_score_from_memory(model.state))
                     print("Obs similarity\n", (model.M.T @ model.M.conj()).real)
-                    print("Action difference\n", (model.V[:, :, None] - model.V[:, None, :]).norm(p=2, dim=0))
-                    print("State  difference\n", (model.Q[:, :, None] - model.Q[:, None, :]).norm(p=2, dim=0))
+                    print("Action difference\n", model.get_action_differences())
+                    print("State  difference\n", model.get_state_differences())
                 
 
                 hd_s_pred_bind_precleanup_t = model.state               # initialize state prediction from binding at time t, used in equation (29)
@@ -250,7 +251,8 @@ class POCMLTrainer(CMLTrainer):
                     # keep the state prediction from binding at time t+1 to used in the next iteration for equation (29)
                     hd_s_pred_bind_precleanup_t = hd_s_pred_bind_precleanup
 
-                    model.normalize_action() # normalize action
+                    if self.normalize: 
+                        model.normalize_action() # normalize action
 
                     model.inc_time()                                  # increment time 
 

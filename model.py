@@ -240,3 +240,28 @@ class POCML(torch.nn.Module):
         self.V /= torch.norm(self.V, p=2, dim=0, keepdim=True)
         return self.V
     
+    # Stat. Analysis
+
+
+    def get_action_differences(self):
+        return ((self.V[:, :, None] - self.V[:, None, :]).norm(p=2, dim=0)).detach()
+    
+    def get_action_similarities(self):
+        return (self.V.T @ self.V).detach()
+    
+    def get_action_kernel(self):
+        pass # TODO
+    
+    def get_state_differences(self):
+        return ((self.Q[:, :, None] - self.Q[:, None, :]).norm(p=2, dim=0)).detach()
+
+    def get_state_similarities(self):
+        return (self.Q.T @ self.Q).detach()
+
+    def get_state_kernel(self):
+        phi_Q = self.random_feature_map(self.Q.T).T
+        return phi_Q.detach()
+        
+    def get_memory_kernel(self):
+        return (self.M.T @ self.M.conj()).real.detach()
+
