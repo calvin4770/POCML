@@ -51,32 +51,10 @@ class CMLTrainer:
 
             return loss_record
 
-    # Sample validation code
-    # def validate_epoch(self):
-    #     self.model.eval()
-    #     total_loss = 0
-    #     with torch.no_grad():
-    #         for data, labels in self.val_loader:
-    #             outputs = self.model(data)
-    #             loss = self.criterion(outputs, labels)
-    #             total_loss += loss.item()
-    #     return total_loss / len(self.val_loader)
-
-    # Sample train
-    # def train(self, num_epochs):
-    #     for epoch in range(num_epochs):
-    #         train_loss = self.train_epoch()
-    #         print(f'Epoch {epoch+1}, Train Loss: {train_loss:.4f}')
-    #         if self.val_loader:
-    #             val_loss = self.validate_epoch()
-    #             print(f'Epoch {epoch+1}, Val Loss: {val_loss:.4f}')
-
-
-
 
 class POCMLTrainer(CMLTrainer):
     def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None,
-                    lr_Q_o = 1., lr_V_o = 0.1, lr_Q_s = 0, lr_V_s = 0, lr_all = 0.32, mem_cleanup_rate = 0.0, normalize = False):
+                    lr_Q_o = 1., lr_V_o = 0.1, lr_Q_s = 0, lr_V_s = 0, lr_all = 0.32, mem_reweight_rate = 0.0, normalize = False):
 
         #super.__init__(model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None)
         self.model = model
@@ -95,7 +73,7 @@ class POCMLTrainer(CMLTrainer):
         self.lr_Q_s = lr_Q_s
         self.lr_V_s = lr_V_s
         self.lr_all = lr_all
-        self.mem_cleanup_rate = mem_cleanup_rate
+        self.mem_reweight_rate = mem_reweight_rate
         self.normalize = normalize
 
     # # Create tensor reused in the update rule (30 - 33)
@@ -119,6 +97,7 @@ class POCMLTrainer(CMLTrainer):
         # Compute exact K 
         K = torch.exp(-self.alpha * diff_s_squared_norm)
         # K = torch.ones(diff_s_squared_norm.shape)
+        
         # Soft-collapsing 
         # K = F.softmax(K * 10, dim=0)
 
@@ -153,7 +132,7 @@ class POCMLTrainer(CMLTrainer):
 
             model = self.model
             device = self.device
-            norm = self.norm
+            normalize = self.normalize
             criterion = nn.CrossEntropyLoss()
             loss_record = []
 
@@ -187,16 +166,16 @@ class POCMLTrainer(CMLTrainer):
                  
 
                 # o_pre  is the observation at time t
-                for o_pre, a, o_next in trajectory[0].to(device):
+                for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
 
-                    if tt == 0: 
+                    if tt == 0 and ttt == 0: 
                         print("Time", model.t)
                     
                     oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
                     
-                    # weight computation before action; at time t
+                    # weight computation of state at time t (before action); eq (31)
                     w_hat = model.compute_weights(model.state)
 
                     # update state by binding action at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
@@ -204,27 +183,24 @@ class POCMLTrainer(CMLTrainer):
 
                     # clean up updated state
                     weights = model.clean_up(hd_s_pred_bind_precleanup)
-                    hd_s_pred_bind = model.state            
+                    hd_s_pred_bind = model.state
 
-                    # predict observation using updated state
+                    # predict observation with updated state
                     oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
 
-                    # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
+                    # infer state from observation at time t+1 via memory, s^{tilde}_{t+1} eq (22)
                     hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
 
-                    # reweight states
-                    model.reweight_state(hd_state_pred_mem, c=self.mem_cleanup_rate)
+                    # reweight states using memory
+                    model.reweight_state(hd_state_pred_mem, c=self.mem_reweight_rate)
 
                     state_pred_bind = weights                                       # eq (24)  u^{hat}_{t+1}
                     state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)  u^tilde}_{t+1}
 
                     # weight computation, (32), w_hat_k are columns of w_hat
-                    w_tilde = model.compute_weights(model.M)                                      # TODO : unassume one-hot encoding of x_t
-                    # w_hat = model.compute_weights(hd_s_pred_bind_precleanup_t)                  # s^{hat}_t^{prime} is not computed in this iteration eq (29)
-                    # w_hat = weights                                                             # TODO option to use s^{hat}_t; 
-                    # w_tilde = state_pred_mem                                                    # deprecated : eq (32) = (25)
+                    w_tilde = model.compute_weights(model.M)                        # assume one-hot encoding of x_t
 
-                    if tt == 0: 
+                    if tt == 0 and ttt == 0: 
                         print("oh_o_next_pred", oh_o_next_pred)
                         print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
                         print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
@@ -235,26 +211,23 @@ class POCMLTrainer(CMLTrainer):
                     update = self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
 
                     # obsevation update rule, eq (31, 32)
-                    #print("dQ: ", self.__update_Q_o(oh_o_next_pred, oh_o_next))                             # update observation for time t+1, x_{t+1} eq (31, 32)  
-                    #print("dV(a_t):" , self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)[:,a])                       #
                     self.__update_Q_o(oh_o_next_pred, oh_o_next)
                     self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)
 
-                    # state update rule, eq (33, 34) TODO
-                    self.__update_Q_s(state_pred_bind, state_pred_mem)                                      # update observation for time t+1, x_{t+1} eq (32, 33)
-                    self.__update_V_s(state_pred_bind, state_pred_mem, oh_a)                                # 
+                    # state update rule, eq (33, 34)
+                    self.__update_Q_s(state_pred_bind, state_pred_mem)                                      
+                    self.__update_V_s(state_pred_bind, state_pred_mem, oh_a)                               
 
-                    # Memory updates 
-                    # self.model_update_memory(o_next) # memorize observation at time t+1 for eq (20)
-                    model.update_memory(hd_s_pred_bind, oh_o_next)
-                    # keep the state prediction from binding at time t+1 to used in the next iteration for equation (29)
-                    hd_s_pred_bind_precleanup_t = hd_s_pred_bind_precleanup
+                    # Memory updates: memorize observation at time t+1; eq (20)
+                    model.update_memory(hd_s_pred_bind, oh_o_next)                                          
 
-                    if self.normalize: 
+                    if normalize: 
                         model.normalize_action() # normalize action
 
-                    model.inc_time()                                  # increment time 
+                    # increment time 
+                    model.inc_time()                                  
 
+                    ## Record loss
                     loss = criterion(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
                     # loss = nn.CrossEntropyLoss()(oh_o_next_pred, oh_o_next)
                     # loss = nn.MSELoss()(oh_o_next_pred, oh_o_next)
