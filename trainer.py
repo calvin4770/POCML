@@ -186,9 +186,9 @@ class POCMLTrainer(CMLTrainer):
                  
 
                 # o_pre  is the observation at time t
-                for o_pre, a, o_next in trajectory[0].to(device):
+                for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
 
-                    if tt == 0: 
+                    if tt == 0 and ttt == 0: 
                         print("Time", model.t)
                     
                     oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
@@ -225,7 +225,7 @@ class POCMLTrainer(CMLTrainer):
                     # w_hat = weights                                                             # TODO option to use s^{hat}_t; 
                     # w_tilde = state_pred_mem                                                    # deprecated : eq (32) = (25)
 
-                    if tt == 0: 
+                    if tt == 0 and ttt == 0: 
                         print("oh_o_next_pred", oh_o_next_pred)
                         print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
                         print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
