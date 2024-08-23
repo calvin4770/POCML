@@ -151,9 +151,10 @@ class POCMLTrainer(CMLTrainer):
 
         with torch.no_grad():
 
-            model = self.model 
+            model = self.model
             device = self.device
             norm = self.norm
+            criterion = nn.CrossEntropyLoss()
             loss_record = []
 
             # memory transfer option/reset rate + for decay design
@@ -195,26 +196,24 @@ class POCMLTrainer(CMLTrainer):
                     oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
                     oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
                     
-                    # weight computation, (31)
+                    # weight computation before action; at time t
                     w_hat = model.compute_weights(model.state)
 
-                    # infer state via binding at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
+                    # update state by binding action at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
                     hd_s_pred_bind_precleanup = model.update_state(oh_a)
-                    
-                    #hd_state_pred_mem = self.model.infer_hd_state_from_memory(oh_o_next) # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
-                    hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
 
-                    # hd_s_pred_bind = self.model.cleanup_hd_state(hd_s_pred_bind)   # clean up state, s^{hat}_{t+1}, eq (19)
-                    weights = model.clean_up(
-                        hd_s_pred_bind_precleanup, 
-                        state_from_memory=hd_state_pred_mem,
-                        c = self.mem_cleanup_rate,
-                    ) # coeff for eq (19); use for eq (24)
+                    # clean up updated state
+                    weights = model.clean_up(hd_s_pred_bind_precleanup)
                     hd_s_pred_bind = model.state            
 
-                    #o_next_pred = self.model_predict_obs(hd_s_pred_bind) # predict observation at time t+1, x^{hat}_{t+1} eq (21)
+                    # predict observation using updated state
                     oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
-                    #print(model.get_obs_score_from_memory(hd_s_pred_bind))
+
+                    # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
+                    hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
+
+                    # reweight states
+                    model.reweight_state(hd_state_pred_mem, c=self.mem_cleanup_rate)
 
                     state_pred_bind = weights                                       # eq (24)  u^{hat}_{t+1}
                     state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)  u^tilde}_{t+1}
@@ -256,7 +255,7 @@ class POCMLTrainer(CMLTrainer):
 
                     model.inc_time()                                  # increment time 
 
-                    loss = nn.CrossEntropyLoss()(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
+                    loss = criterion(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
                     # loss = nn.CrossEntropyLoss()(oh_o_next_pred, oh_o_next)
                     # loss = nn.MSELoss()(oh_o_next_pred, oh_o_next)
                     # loss_hidden = nn.CrossEntropyLoss()(hd_s_pred_bind, hd_state_pred_mem)
