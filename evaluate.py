@@ -2,8 +2,8 @@ import torch
 import torch.nn.functional as F
 
 def accuracy(model, dataloader, mem_cleanup_rate=1):
-    total = 0
-    correct = 0
+    total, correct = 0, 0
+    confidences = []
 
     for trajectory in dataloader:
         model.init_time()
@@ -38,10 +38,40 @@ def accuracy(model, dataloader, mem_cleanup_rate=1):
             # reweight states
             model.reweight_state(hd_state_pred_mem, c=mem_cleanup_rate)
 
+            confidences.append(oh_o_next_pred[o_next].item())
             if oh_o_next[torch.argmax(oh_o_next_pred, dim=0)] == 1:
                 correct += 1
             total += 1
-    return correct / total
+    return correct / total, confidences
 
-def state_transition_accuracy(model, env):
-    pass
+def state_transition_consistency(model, env):
+    node_to_action_matrix = env.node_to_action_matrix
+    n_nodes = node_to_action_matrix.shape[0]
+    
+    phi_Q = model.get_state_kernel()
+    phi_V = model.get_action_kernel()
+    Q = model.Q
+    V = model.V
+
+    total, correct = 0, 0
+    confidences = []
+    distance_ratios = []
+
+    for src in range(n_nodes):
+        for tgt in range(n_nodes):
+            action_idx = node_to_action_matrix[src][tgt]
+            if action_idx != -1:
+                pred_state = phi_Q[:, src] * phi_V[:, action_idx]
+                ps = model.compute_weights(pred_state)
+                confidences.append(ps[tgt].item())
+                if torch.argmax(ps) == tgt:
+                    correct += 1
+                total += 1
+
+                state_src = Q[:, src]
+                state_tgt = Q[:, tgt]
+                state_pred = state_src + V[:, action_idx]
+                state_pred_dist = torch.linalg.norm(state_tgt - state_pred).item()
+                state_dist_total = torch.linalg.norm(state_tgt - state_src).item()
+                distance_ratios.append(state_pred_dist / state_dist_total)
+    return correct / total, confidences, distance_ratios

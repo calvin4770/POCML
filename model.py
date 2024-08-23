@@ -91,7 +91,7 @@ class POCML(torch.nn.Module):
 
     # Initialize state, with the option to pass in the first observation.
     def init_state(self, obs=None):
-        phi_Q = self.random_feature_map(self.Q.T).T
+        phi_Q = self.get_state_kernel()
         if obs is None:
             self.state = phi_Q.mean(dim=0)
         else:
@@ -106,7 +106,7 @@ class POCML(torch.nn.Module):
             else:
                 self.M = memory
         else:
-            self.M = self.random_feature_map(self.Q.T).T # == phi(q)
+            self.M = self.get_state_kernel()
 
     def update_memory(self, state, obs):
 
@@ -114,7 +114,7 @@ class POCML(torch.nn.Module):
             self.M *= self.decay                # TODO alternative memory update and decay method
             self.M += torch.outer(state, obs)
         else:
-            self.M = self.random_feature_map(self.Q.T).T # == phi(q)
+            self.M = self.get_state_kernel()
 
     # Retrieves state from memory given obs (Eq. 22).
     def get_state_from_memory(self, obs):
@@ -141,9 +141,14 @@ class POCML(torch.nn.Module):
     #     new_state = phi_Q @ weights.to(torch.complex64)
     #     self.state = new_state
     #     return weights
+
+    def get_state_score(self, state):
+        phi_Q = self.get_state_kernel()
+        return self.beta * (phi_Q.conj().T @ state).real
+
     def clean_up(self, state):
-        phi_Q = self.random_feature_map(self.Q.T).T
-        weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real, dim=0)
+        phi_Q = self.get_state_kernel()
+        weights = self.compute_weights(state)
         new_state = phi_Q @ weights.to(torch.complex64)
         self.state = new_state
         return weights
@@ -153,8 +158,8 @@ class POCML(torch.nn.Module):
     
     # Compute weight given a state
     def compute_weights(self, state):
-        phi_Q = self.random_feature_map(self.Q.T).T
-        weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real, dim=0)
+        score = self.get_state_score(state)
+        weights = F.softmax(score, dim=0)
         return weights
     
     # Update state given action (pre clean-up) (Eq. 18).
@@ -166,8 +171,7 @@ class POCML(torch.nn.Module):
     
     # Given the goal state, return the utilities for all actions (Eq. 35).
     def get_utilities(self, state):
-        phi_Q = self.random_feature_map(self.Q.T).T
-        p = F.softmax(self.beta * (phi_Q.conj().T @ state).real)
+        p = self.compute_weights(self.state)
         return self.V.T @ (state - self.Q @ p)
 
     # Given the goal state, return the action index with highest utility.
@@ -259,7 +263,8 @@ class POCML(torch.nn.Module):
         return (self.V.T @ self.V).detach()
     
     def get_action_kernel(self):
-        pass # TODO
+        phi_V = self.random_feature_map(self.V.T).T
+        return phi_V.detach()
     
     def get_state_differences(self):
         return ((self.Q[:, :, None] - self.Q[:, None, :]).norm(p=2, dim=0)).detach()
