@@ -25,7 +25,7 @@ class RandomFeatureMap(torch.nn.Module):
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.alpha = alpha                  # inverse length scale
-        self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim).to(torch.complex64) / alpha)
+        self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim).to(torch.complex64) / alpha, requires_grad=False)
         #self.W = torch.nn.Parameter((torch.rand(out_dim, in_dim).to(torch.complex64) * 2 * np.pi / alpha))    # sinc kernel
         self.sqrt_out_dim = np.sqrt(out_dim)
 
@@ -74,8 +74,8 @@ class POCML(torch.nn.Module):
         self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
         self.decay = decay # decay parameter for memory
 
-        self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim))
-        self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim))
+        self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
+        self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
         self.random_feature_map = RandomFeatureMap(state_dim, random_feature_dim, alpha=alpha)
 
         self.init_memory(memory=memory)
@@ -102,7 +102,7 @@ class POCML(torch.nn.Module):
 
         if not self.memory_bypass:
             if memory is None:
-                self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64))
+                self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64), requires_grad=False)
             else:
                 self.M = memory
         else:
@@ -122,25 +122,34 @@ class POCML(torch.nn.Module):
 
     # Retrieves obs from memory given state (Eq. 21).
     def get_obs_from_memory(self, state):
-        score = self.beta * (self.M.conj().T @ state).real
+        score = self.get_obs_score_from_memory(state)
         return F.softmax(score, dim=0)
     
     def get_obs_score_from_memory(self, state):
-        return (self.M.conj().T @ state).real
+        return self.beta * (self.M.conj().T @ state).real
     
     # Cleans up state to be a linear combination of the columns of \phi(Q) (Eq. 19).
     # Optional: pass in state obtained from associative memory given observation, weighted by c.
     # c needs to be in [0, 1]
     # Returns weights in linear combination.
-    def clean_up(self, state, state_from_memory=None, c=0):
+    # def clean_up(self, state, state_from_memory=None, c=0):
+    #     phi_Q = self.random_feature_map(self.Q.T).T
+    #     weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real, dim=0)
+    #     if state_from_memory is not None:
+    #         memory_weights = F.softmax(self.beta * (phi_Q.conj().T @ state_from_memory).real, dim=0)
+    #         weights = (1-c) * weights + c * memory_weights # convex combination
+    #     new_state = phi_Q @ weights.to(torch.complex64)
+    #     self.state = new_state
+    #     return weights
+    def clean_up(self, state):
         phi_Q = self.random_feature_map(self.Q.T).T
         weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real, dim=0)
-        if state_from_memory is not None:
-            memory_weights = F.softmax(self.beta * (phi_Q.conj().T @ state_from_memory).real, dim=0)
-            weights = (1-c) * weights + c * memory_weights # convex combination
         new_state = phi_Q @ weights.to(torch.complex64)
         self.state = new_state
         return weights
+    
+    def reweight_state(self, state_from_mem, c=0):
+        self.state = (1-c) * self.state + c * (state_from_mem)
     
     # Compute weight given a state
     def compute_weights(self, state):
