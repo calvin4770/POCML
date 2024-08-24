@@ -66,7 +66,8 @@ class POCMLTrainer(CMLTrainer):
         self.norm = norm
 
         # POCML model param for training
-        self.beta = model.beta                                  # state prediction temperature, eq(21)
+        self.beta_obs = model.beta_obs                          # observation prediction temperature
+        self.beta_state = model.beta_state                      # state prediction temperature
         self.alpha = model.random_feature_map.alpha             # (inverse) lengscale of the RBF
         self.lr_Q_o = lr_Q_o
         self.lr_V_o = lr_V_o
@@ -92,7 +93,7 @@ class POCMLTrainer(CMLTrainer):
         diff_s_squared_norm = torch.sum(diff_s ** 2, dim=-1)
 
         # Approximating K with phi(Q)
-        # K = ((model.random_feature_map(model.Q.T)) @ (model.random_feature_map(s_hat).T)).real
+        # K = ((model.random_feature_map(model.Q.T)) @ (model.random_feature_map(s_hat).T)).real / D
 
         # Compute exact K 
         K = torch.exp(-self.alpha * diff_s_squared_norm)
@@ -101,8 +102,8 @@ class POCMLTrainer(CMLTrainer):
         # Soft-collapsing 
         # K = F.softmax(K * 10, dim=0)
 
-        print("K_ij at time \n", self.model.t, ":\n", K)
-        print("s_diff_n2:", diff_s_squared_norm)
+        # print("K_ij at time \n", self.model.t, ":\n", K)
+        # print("s_diff_n2:", diff_s_squared_norm)
 
         self.update_tensor = torch.einsum('j,ij,ijm->ijm', w_hat, K, diff_s)
 
@@ -198,7 +199,7 @@ class POCMLTrainer(CMLTrainer):
                     state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)  u^tilde}_{t+1}
 
                     # weight computation, (32), w_hat_k are columns of w_hat
-                    w_tilde = model.compute_weights(model.M)                        # assume one-hot encoding of x_t
+                    w_tilde = model.compute_weights(model.M.T)                        # assume one-hot encoding of x_t
 
                     if tt == 0 and ttt == 0: 
                         print("oh_o_next_pred", oh_o_next_pred)
@@ -240,7 +241,7 @@ class POCMLTrainer(CMLTrainer):
     def __update_Q_o(self, oh_o_next_pred, oh_o_next_target):
 
         # TODO scaling factor for update (29)
-        eta = self.lr_Q_o * self.alpha * self.beta * self.lr_all
+        eta = self.lr_Q_o * self.alpha * self.beta_obs * self.lr_all
         
         update_weight = eta * torch.einsum('k, kmn', oh_o_next_target - oh_o_next_pred, self.Z_q)
 
@@ -250,7 +251,7 @@ class POCMLTrainer(CMLTrainer):
     def __update_V_o(self, oh_o_next_pred, oh_o_next_target, oh_a):
 
         # TODO scaling factor for update (30)
-        eta = self.lr_V_o * self.alpha * self.beta * self.lr_all
+        eta = self.lr_V_o * self.alpha * self.beta_obs * self.lr_all
 
         update_weight = eta * torch.einsum('k, kmn', oh_o_next_target - oh_o_next_pred, self.Z_v)
 
@@ -259,7 +260,7 @@ class POCMLTrainer(CMLTrainer):
         
     def __update_Q_s(self, state_pred_bind, state_pred_mem):
 
-        eta = self.lr_Q_s * self.alpha * self.beta * self.lr_all
+        eta = self.lr_Q_s * self.alpha * self.beta_state * self.lr_all
 
         update_weight = eta * torch.einsum('k, kmn', state_pred_mem - state_pred_bind, self.W_q)
 
@@ -268,87 +269,9 @@ class POCMLTrainer(CMLTrainer):
 
     def __update_V_s(self, state_pred_bind, state_pred_mem, oh_a):
 
-        eta = self.lr_V_s * self.alpha * self.beta * self.lr_all
+        eta = self.lr_V_s * self.alpha * self.beta_state * self.lr_all
 
         update_weight = eta * torch.einsum('k, kmn', state_pred_mem - state_pred_bind, self.W_v)
         
         self.model.V += update_weight
         return update_weight
-
-
-
-    # # Create tensor reused in the update rule (30 - 33)
-    # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
-    # Deprecated: This function is replaced by __prep_update 
-    # def __prep_update_old(self, w_tilde, w_hat, oh_a):
-        
-    #     model = self.model 
-    #     Q = model.Q
-
-    #     omega = torch.outer(w_tilde, w_hat)                 # omega_ij = w_tilde_i * w_hat_j
-
-    #     v_t = model.V @ oh_a
-    #     s_hat = (Q.T) + v_t[None, :]                        # s_hat_j = (s_j + v_t)
-    #     diff_s = (Q.T)[:, None, :] - s_hat[None, :, :]      # generate n_s * n_s * n tensor [s_i - s_hat_j]_i,j
-        
-    #     diff_s_squared_norm = torch.sum(diff_s ** 2, dim=-1)
-
-    #     # Approximating K with phi(Q)
-    #     # K = ((model.random_feature_map(model.Q.T)) @ (model.random_feature_map(s_hat).T)).real
-
-    #     # Compute exact K 
-    #     K = torch.exp(-self.alpha * diff_s_squared_norm)
-    #     # Soft-collapsing 
-    #     # K = F.softmax(K * 10, dim=0)
-
-    #     print("K_ij at time \n", self.model.t, ":\n", K)
-    #     print("s_diff_n2:", diff_s_squared_norm)
-
-    #     self.update_tensor = (omega * K)[:, : ,None] * diff_s
-    #     #self.update_tensor = torch.einsum('ij,ijm->ijm', omega * K, diff_s)    # Alternatively
-
-    # def __update_Q_o_old(self, oh_o_next_pred, oh_o_next_target, add=True):
-
-    #     eta = self.lr_Q_o * self.alpha * self.beta * self.lr_all
-        
-    #     u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
-    #     if add:
-    #         update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
-    #                         torch.einsum('ijk,jl->kl', self.update_tensor, u)
-    #         self.model.Q += update_weight
-    #     else:
-    #         update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
-    #                         torch.einsum('ijk,il->kl', self.update_tensor, u)
-    #         self.model.Q -= update_weight
-    #     return update_weight
-
-    # def __update_V_o_old(self, oh_o_next_pred, oh_o_next_target, oh_a):
-
-    #     eta = self.lr_V_o * self.alpha * self.beta * self.lr_all
-    #     update_weight = eta * (1 - torch.dot(oh_o_next_pred, oh_o_next_target)) * \
-    #                     torch.einsum('ijk,l->kl', self.update_tensor, oh_a)
-    #     self.model.V += update_weight
-    #     return update_weight 
-        
-    # def __update_Q_s_old(self, state_pred_bind, add=True):
-
-    #     eta = self.lr_Q_s * self.alpha * self.beta * self.lr_all
-       
-    #     u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
-    #     if add:
-    #         update_weight = eta * \
-    #                         torch.einsum('i,ijk,jl->kl', state_pred_bind, self.update_tensor, u)
-    #         self.model.Q += update_weight
-    #     else:
-    #         update_weight = eta * \
-    #                         torch.einsum('i,ijk,il->kl', state_pred_bind, self.update_tensor, u)
-    #         self.model.Q -= update_weight
-    #     return update_weight
-
-    # def __update_V_s_old(self, state_pred_bind, oh_a):
-
-    #     eta = self.lr_V_s * self.alpha * self.beta * self.lr_all
-    #     update_weight = eta * \
-    #                     torch.einsum('i,ijk,l->kl', state_pred_bind, self.update_tensor, oh_a)
-    #     self.model.V += update_weight
-    #     return update_weight

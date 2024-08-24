@@ -11,13 +11,13 @@ import numpy as np
 def sim(x, y):
     D = x.shape[-1]
     if len(x.shape) == 1 and len(y.shape) == 1:
-        return (x @ y.conj()).real
+        return (x @ y.conj()).real / D
     elif len(x.shape) == 2 and len(y.shape) == 1:
-        return torch.einsum("ij,j->i", x, y.conj()).real
+        return torch.einsum("ij,j->i", x, y.conj()).real / D
     elif len(x.shape) == 1 and len(y.shape) == 2:
-        return torch.einsum("j,ij->i", x, y.conj()).real
+        return torch.einsum("j,ij->i", x, y.conj()).real / D
     else:
-        return torch.einsum("ri,ci->rc", x, y.conj()).real
+        return torch.einsum("ri,ci->rc", x, y.conj()).real / D
 
 class RandomFeatureMap(torch.nn.Module):
     def __init__(self, in_dim, out_dim, alpha=1):
@@ -27,7 +27,6 @@ class RandomFeatureMap(torch.nn.Module):
         self.alpha = alpha                  # inverse length scale
         self.W = torch.nn.Parameter(torch.randn(out_dim, in_dim).to(torch.complex64) / alpha, requires_grad=False)
         #self.W = torch.nn.Parameter((torch.rand(out_dim, in_dim).to(torch.complex64) * 2 * np.pi / alpha))    # sinc kernel
-        self.sqrt_out_dim = np.sqrt(out_dim)
 
     # Applies the random feature map.
     # Input shape: [in_dim]
@@ -36,16 +35,12 @@ class RandomFeatureMap(torch.nn.Module):
     # Output shape: [..., out_dim]
     def forward(self, x):
         if len(x.shape) == 1:
-            #out = torch.exp(1j * self.W @ x.to(torch.complex64) / self.alpha) / self.sqrt_out_dim
-            # n = torch.norm(x, p=2, dim=-1, keepdim=True)
-            n = 1 
-            out = torch.exp(1j * self.W @ (x/n).to(torch.complex64) / self.alpha) / self.sqrt_out_dim
-            #return out/torch.norm(out, p=2)
+            out = torch.exp(1j * self.W @ x.to(torch.complex64) / self.alpha)
             return out
         else:
             # n = torch.norm(x, p=2, dim=-1, keepdim=True)
             n = 1
-            out = torch.exp(1j * torch.einsum("ij,...j->...i", self.W, (x/n).to(torch.complex64)) / self.alpha ) / self.sqrt_out_dim
+            out = torch.exp(1j * torch.einsum("ij,...j->...i", self.W, (x/n).to(torch.complex64)) / self.alpha )
             # out = torch.exp(1j * ((x/n).to(torch.complex64) @ self.W.T) / self.alpha ) / self.sqrt_out_dim
             #return out/torch.norm(out, p=2, dim=-1, keepdim=True)
             return out
@@ -58,7 +53,8 @@ class POCML(torch.nn.Module):
                  state_dim,
                  random_feature_dim,
                  alpha=1,
-                 beta=1,
+                 beta_obs=1,
+                 beta_state=1,
                  memory_bypass=False,
                  decay=0.9,
                  memory=None,
@@ -70,7 +66,8 @@ class POCML(torch.nn.Module):
         self.n_actions = n_actions # number of actions
         self.state_dim = state_dim # dimension of state space
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
-        self.beta = beta # temperature parameter for softmax
+        self.beta_obs = beta_obs # temperature parameter for predicting observation
+        self.beta_state = beta_state # temperature parameter for predicting state (after clean up)
         self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
         self.decay = decay # decay parameter for memory
 
@@ -126,25 +123,12 @@ class POCML(torch.nn.Module):
         return F.softmax(score, dim=0)
     
     def get_obs_score_from_memory(self, state):
-        return self.beta * (self.M.conj().T @ state).real
-    
-    # Cleans up state to be a linear combination of the columns of \phi(Q) (Eq. 19).
-    # Optional: pass in state obtained from associative memory given observation, weighted by c.
-    # c needs to be in [0, 1]
-    # Returns weights in linear combination.
-    # def clean_up(self, state, state_from_memory=None, c=0):
-    #     phi_Q = self.random_feature_map(self.Q.T).T
-    #     weights = F.softmax(self.beta * (phi_Q.conj().T @ state).real, dim=0)
-    #     if state_from_memory is not None:
-    #         memory_weights = F.softmax(self.beta * (phi_Q.conj().T @ state_from_memory).real, dim=0)
-    #         weights = (1-c) * weights + c * memory_weights # convex combination
-    #     new_state = phi_Q @ weights.to(torch.complex64)
-    #     self.state = new_state
-    #     return weights
+        return self.beta_obs * sim(self.M.T, state)
 
     def get_state_score(self, state):
         phi_Q = self.get_state_kernel()
-        return self.beta * (phi_Q.conj().T @ state).real
+        #print(phi_Q.shape, state.shape)
+        return self.beta_state * sim(phi_Q.T, state)
 
     def clean_up(self, state):
         phi_Q = self.get_state_kernel()
@@ -277,5 +261,5 @@ class POCML(torch.nn.Module):
         return phi_Q.detach()
         
     def get_memory_kernel(self):
-        return (self.M.T @ self.M.conj()).real.detach()
+        return sim(self.M.T, self.M)
 
