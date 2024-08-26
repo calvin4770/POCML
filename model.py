@@ -113,7 +113,6 @@ class POCML(torch.nn.Module):
             if self.decay == "adaptive":
                 state_from_obs = self.get_state_from_memory(obs)
                 s = sim(state_from_obs, state)
-                print("s", s)
                 self.M += (1 - s) * torch.outer(state, obs)
             else:
                 self.M *= self.decay

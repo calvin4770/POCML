@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm.notebook import tqdm
 
-from model import sim
+from model import sim, POCML
 
 class CMLTrainer:
     def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None):
@@ -141,7 +141,7 @@ class POCMLTrainer(CMLTrainer):
 
         with torch.no_grad():
 
-            model = self.model
+            model: POCML = self.model
             device = self.device
             normalize = self.normalize
             criterion = nn.CrossEntropyLoss()
@@ -163,13 +163,12 @@ class POCMLTrainer(CMLTrainer):
                 model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
                 model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
-                if tt == 0: 
-                    print("Current Trajectory", trajectory[0])
-                    print("initial state:", trajectory[0,0,0])
-                    print("Print initial score", model.get_obs_score_from_memory(model.state))
-                    print("Obs similarity\n", sim(model.M.T, model.M.T))
-                    print("Action difference\n", model.get_action_differences())
-                    print("State  difference\n", model.get_state_differences())
+                print("Current Trajectory", trajectory[0])
+                print("initial state:", trajectory[0,0,0])
+                print("Print initial score", model.get_obs_score_from_memory(model.state))
+                print("Obs similarity\n", sim(model.M.T, model.M.T))
+                print("Action similarities\n", model.get_action_similarities())
+                print("State  difference\n", model.get_state_differences())
 
                 # o_pre  is the observation at time t
                 dQ_total = torch.zeros_like(model.Q)
@@ -183,10 +182,7 @@ class POCMLTrainer(CMLTrainer):
 
         return loss_record
     
-    def __one_time_step(self, model, o_pre, a, o_next, tt, ttt, criterion, normalize=False):
-        if tt == 0 and ttt == 0: 
-            print("Time", model.t)
-        
+    def __one_time_step(self, model: POCML, o_pre, a, o_next, tt, ttt, criterion, normalize=False):
         oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
         oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
         oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
@@ -216,12 +212,13 @@ class POCMLTrainer(CMLTrainer):
         # weight computation, (32), w_hat_k are columns of w_hat
         w_tilde = model.compute_weights(model.M.T)                        # assume one-hot encoding of x_t
 
-        if tt == 0 and ttt == 0: 
-            print("oh_o_next_pred", oh_o_next_pred)
-            print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
-            print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
-            print("w^hat:   ", w_hat)
-            print("w^tilde: ", w_tilde)
+        print("Time", model.t)
+        print("o_pre, o_next", o_pre, o_next)
+        print("oh_o_next_pred", oh_o_next_pred)
+        print("Predicted obs from action\n", model.get_obs_from_memory(hd_s_pred_bind))
+        print("Predicted state before action (w hat):   ", w_hat)
+        print("Predicted state after action (u hat):   ", state_pred_bind)
+        print("Predicted state from obs + memory (u tilde): ", state_pred_mem)
 
         # update rule, eq (31-34)
         self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
@@ -233,6 +230,13 @@ class POCMLTrainer(CMLTrainer):
         # state update rule, eq (33, 34)
         dQs = self.__update_Q_s(state_pred_bind, state_pred_mem)
         dVs = self.__update_V_s(state_pred_bind, state_pred_mem)
+
+        # don't predict if you've never seen it before
+        if model.get_state_from_memory(oh_o_next).sum() == 0:
+            dQo = torch.zeros_like(dQo)
+            dVo = torch.zeros_like(dVo)
+            dQs = torch.zeros_like(dQs)
+            dVs = torch.zeros_like(dVs)
 
         # Memory updates: memorize observation at time t+1; eq (20)
         model.update_memory(model.state, oh_o_next)                                          
