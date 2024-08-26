@@ -214,11 +214,10 @@ class POCMLTrainer(CMLTrainer):
 
         print("Time", model.t)
         print("o_pre, o_next", o_pre, o_next)
-        print("oh_o_next_pred", oh_o_next_pred)
-        print("Predicted obs from action\n", model.get_obs_from_memory(hd_s_pred_bind))
-        print("Predicted state before action (w hat):   ", w_hat)
-        print("Predicted state after action (u hat):   ", state_pred_bind)
-        print("Predicted state from obs + memory (u tilde): ", state_pred_mem)
+        print("Predicted obs from action", oh_o_next_pred)
+        print("Predicted state before action (w hat):", w_hat)
+        print("Predicted state after action (u hat):", state_pred_bind)
+        print("Predicted state from obs + memory (u tilde):", state_pred_mem)
 
         # update rule, eq (31-34)
         self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
