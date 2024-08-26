@@ -164,11 +164,11 @@ class POCMLTrainer(CMLTrainer):
                 model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
                 print("Current Trajectory", trajectory[0])
-                print("initial state:", trajectory[0,0,0])
                 print("Print initial score", model.get_obs_score_from_memory(model.state))
-                print("Obs similarity\n", sim(model.M.T, model.M.T))
+                print("Obs similarity based on memory (want close to identity)\n", sim(model.M.T, model.M.T))
                 print("Action similarities\n", model.get_action_similarities())
-                print("State  difference\n", model.get_state_differences())
+                phi_Q = model.get_state_kernel()
+                print("State kernel similarities (want close to identitiy)\n", sim(phi_Q.T, phi_Q.T))
 
                 # o_pre  is the observation at time t
                 dQ_total = torch.zeros_like(model.Q)
