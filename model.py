@@ -57,6 +57,7 @@ class POCML(torch.nn.Module):
                  beta_state=1,
                  memory_bypass=False,
                  decay=0.9,
+                 mem_reweight_rate=1.0,
                  memory=None,
                  obs=None
     ):
@@ -70,6 +71,7 @@ class POCML(torch.nn.Module):
         self.beta_state = beta_state # temperature parameter for predicting state (after clean up)
         self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
         self.decay = decay # decay parameter for memory
+        self.mem_reweight_rate = mem_reweight_rate
 
         self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
         self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
@@ -96,7 +98,7 @@ class POCML(torch.nn.Module):
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
     def init_memory(self, memory=None):
-
+        self.item_count = 0
         if not self.memory_bypass:
             if memory is None:
                 self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64), requires_grad=False)
@@ -106,10 +108,16 @@ class POCML(torch.nn.Module):
             self.M = self.get_state_kernel()
 
     def update_memory(self, state, obs):
-
+        self.item_count += 1
         if not self.memory_bypass:
-            self.M *= self.decay                # TODO alternative memory update and decay method
-            self.M += torch.outer(state, obs)
+            if self.decay == "adaptive":
+                state_from_obs = self.get_state_from_memory(obs)
+                s = sim(state_from_obs, state)
+                print("s", s)
+                self.M += (1 - s) * torch.outer(state, obs)
+            else:
+                self.M *= self.decay
+                self.M += torch.outer(state, obs)
         else:
             self.M = self.get_state_kernel()
 
@@ -127,7 +135,6 @@ class POCML(torch.nn.Module):
 
     def get_state_score(self, state):
         phi_Q = self.get_state_kernel()
-        #print(phi_Q.shape, state.shape)
         return self.beta_state * sim(phi_Q.T, state)
 
     def clean_up(self, state):
@@ -137,8 +144,19 @@ class POCML(torch.nn.Module):
         self.state = new_state
         return weights
     
-    def reweight_state(self, state_from_mem, c=0):
+    def reweight_state(self, state_from_mem):
+        if self.mem_reweight_rate == "adaptive":
+            state_score = self.get_state_score(self.state)
+            state_mem_score = self.get_state_score(state_from_mem)
+            state_entropy = self.__entropy_from_logits(state_score)
+            state_mem_entropy = self.__entropy_from_logits(state_mem_score)
+            c = state_entropy / (state_entropy + state_mem_entropy)
+        else:
+            c = self.mem_reweight_rate
         self.state = (1-c) * self.state + c * (state_from_mem)
+
+    def __entropy_from_logits(self, logits):
+        return -torch.sum(F.softmax(logits, dim=0) * F.log_softmax(logits, dim=0))
     
     # Compute weight given a state
     def compute_weights(self, state):
@@ -153,6 +171,18 @@ class POCML(torch.nn.Module):
         self.state = self.state * phi_v
         return self.state
     
+    def update_representations(self, dQ, dV, refactor_memory=False):
+        if refactor_memory:
+            weights = F.softmax(sim(self.get_state_kernel().T, self.M.T), dim=0)
+        self.Q += dQ
+        self.V += dV
+        if refactor_memory:
+            self.M = torch.nn.Parameter(
+                self.get_state_kernel() @ weights.to(torch.complex64),
+                requires_grad=False
+            )
+
+
     # Given the goal state, return the utilities for all actions (Eq. 35).
     def get_utilities(self, state):
         p = self.compute_weights(self.state)

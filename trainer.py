@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm.notebook import tqdm
 
+from model import sim
+
 class CMLTrainer:
     def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None):
         
@@ -53,8 +55,22 @@ class CMLTrainer:
 
 
 class POCMLTrainer(CMLTrainer):
-    def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None,
-                    lr_Q_o = 1., lr_V_o = 0.1, lr_Q_s = 0, lr_V_s = 0, lr_all = 0.32, mem_reweight_rate = 0.0, normalize = False):
+    def __init__(self,
+                 model,
+                 train_loader,
+                 norm=False,
+                 optimizer=None,
+                 criterion=None,
+                 val_loader=None,
+                 device=None,
+                 lr_Q_o = 1.,
+                 lr_V_o = 0.1,
+                 lr_Q_s = 0,
+                 lr_V_s = 0,
+                 lr_all = 0.32,
+                 reset_every = 1, # reset every N trajectories
+                 refactor_memory = False,
+                 normalize = False):
 
         #super.__init__(model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None)
         self.model = model
@@ -74,8 +90,9 @@ class POCMLTrainer(CMLTrainer):
         self.lr_Q_s = lr_Q_s
         self.lr_V_s = lr_V_s
         self.lr_all = lr_all
-        self.mem_reweight_rate = mem_reweight_rate
         self.normalize = normalize
+        self.reset_every = reset_every
+        self.refactor_memory = refactor_memory
 
     # # Create tensor reused in the update rule (30 - 33)
     # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
@@ -97,13 +114,6 @@ class POCMLTrainer(CMLTrainer):
 
         # Compute exact K 
         K = torch.exp(-self.alpha * diff_s_squared_norm)
-        # K = torch.ones(diff_s_squared_norm.shape)
-        
-        # Soft-collapsing 
-        # K = F.softmax(K * 10, dim=0)
-
-        # print("K_ij at time \n", self.model.t, ":\n", K)
-        # print("s_diff_n2:", diff_s_squared_norm)
 
         self.update_tensor = torch.einsum('j,ij,ijm->ijm', w_hat, K, diff_s)
 
@@ -144,8 +154,8 @@ class POCMLTrainer(CMLTrainer):
 
                 model.init_time()
                 
-                #if model.reset_per_trajectory:             # memory have to option to reset per trajectory
-                #    model.init_memory()
+                if tt % self.reset_every == 0:             # memory have to option to reset per trajectory
+                    model.init_memory()
                                                             # TODO memory should have the option to reset per graph instance
 
                 oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
@@ -157,86 +167,85 @@ class POCMLTrainer(CMLTrainer):
                     print("Current Trajectory", trajectory[0])
                     print("initial state:", trajectory[0,0,0])
                     print("Print initial score", model.get_obs_score_from_memory(model.state))
-                    print("Obs similarity\n", (model.M.T @ model.M.conj()).real)
+                    print("Obs similarity\n", sim(model.M.T, model.M.T))
                     print("Action difference\n", model.get_action_differences())
                     print("State  difference\n", model.get_state_differences())
-                
-
-                hd_s_pred_bind_precleanup_t = model.state               # initialize state prediction from binding at time t, used in equation (29)
-                                                                        # at t = 0, this is initialized as initial state      
-                 
 
                 # o_pre  is the observation at time t
+                dQ_total = torch.zeros_like(model.Q)
+                dV_total = torch.zeros_like(model.V)
                 for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
-
-                    if tt == 0 and ttt == 0: 
-                        print("Time", model.t)
-                    
-                    oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
-                    oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
-                    oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
-                    
-                    # weight computation of state at time t (before action); eq (31)
-                    w_hat = model.compute_weights(model.state)
-
-                    # update state by binding action at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
-                    hd_s_pred_bind_precleanup = model.update_state(oh_a)
-
-                    # clean up updated state
-                    weights = model.clean_up(hd_s_pred_bind_precleanup)
-                    hd_s_pred_bind = model.state
-
-                    # predict observation with updated state
-                    oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
-
-                    # infer state from observation at time t+1 via memory, s^{tilde}_{t+1} eq (22)
-                    hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
-
-                    # reweight states using memory
-                    model.reweight_state(hd_state_pred_mem, c=self.mem_reweight_rate)
-
-                    state_pred_bind = weights                                       # eq (24)  u^{hat}_{t+1}
-                    state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)  u^tilde}_{t+1}
-
-                    # weight computation, (32), w_hat_k are columns of w_hat
-                    w_tilde = model.compute_weights(model.M.T)                        # assume one-hot encoding of x_t
-
-                    if tt == 0 and ttt == 0: 
-                        print("oh_o_next_pred", oh_o_next_pred)
-                        print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
-                        print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
-                        print("w^hat:   ", w_hat)
-                        print("w^tilde: ", w_tilde)
-
-                    # update rule, eq (31-34)
-                    update = self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
-
-                    # obsevation update rule, eq (31, 32)
-                    self.__update_Q_o(oh_o_next_pred, oh_o_next)
-                    self.__update_V_o(oh_o_next_pred, oh_o_next, oh_a)
-
-                    # state update rule, eq (33, 34)
-                    self.__update_Q_s(state_pred_bind, state_pred_mem)                                      
-                    self.__update_V_s(state_pred_bind, state_pred_mem, oh_a)                               
-
-                    # Memory updates: memorize observation at time t+1; eq (20)
-                    model.update_memory(hd_s_pred_bind, oh_o_next)                                          
-
-                    if normalize: 
-                        model.normalize_action() # normalize action
-
-                    # increment time 
-                    model.inc_time()                                  
-
-                    ## Record loss
-                    loss = criterion(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
-                    # loss = nn.CrossEntropyLoss()(oh_o_next_pred, oh_o_next)
-                    # loss = nn.MSELoss()(oh_o_next_pred, oh_o_next)
-                    # loss_hidden = nn.CrossEntropyLoss()(hd_s_pred_bind, hd_state_pred_mem)
+                    dQ, dV, loss = self.__one_time_step(model, o_pre, a, o_next, tt, ttt, criterion, normalize=normalize)
+                    dQ_total += dQ
+                    dV_total += dV
                     loss_record.append(loss.cpu().item())
-
+                model.update_representations(dQ_total, dV_total, refactor_memory=self.refactor_memory)
 
         return loss_record
+    
+    def __one_time_step(self, model, o_pre, a, o_next, tt, ttt, criterion, normalize=False):
+        if tt == 0 and ttt == 0: 
+            print("Time", model.t)
+        
+        oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
+        oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
+        oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
+        
+        # weight computation of state at time t (before action); eq (31)
+        w_hat = model.compute_weights(model.state)
+
+        # update state by binding action at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
+        hd_s_pred_bind_precleanup = model.update_state(oh_a)
+
+        # clean up updated state
+        weights = model.clean_up(hd_s_pred_bind_precleanup)
+        hd_s_pred_bind = model.state
+
+        # predict observation with updated state
+        oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
+
+        # infer state from observation at time t+1 via memory, s^{tilde}_{t+1} eq (22)
+        hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
+
+        # reweight states using memory
+        model.reweight_state(hd_state_pred_mem)
+
+        state_pred_bind = weights                                       # eq (24)  u^{hat}_{t+1}
+        state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)  u^tilde}_{t+1}
+
+        # weight computation, (32), w_hat_k are columns of w_hat
+        w_tilde = model.compute_weights(model.M.T)                        # assume one-hot encoding of x_t
+
+        if tt == 0 and ttt == 0: 
+            print("oh_o_next_pred", oh_o_next_pred)
+            print("Predicted state from binding\n", model.get_obs_score_from_memory(model.state))
+            print("Predicted state from memory \n", model.get_obs_score_from_memory(hd_state_pred_mem))
+            print("w^hat:   ", w_hat)
+            print("w^tilde: ", w_tilde)
+
+        # update rule, eq (31-34)
+        self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
+
+        # obsevation update rule, eq (31, 32)
+        dQo = self.__update_Q_o(oh_o_next_pred, oh_o_next)
+        dVo = self.__update_V_o(oh_o_next_pred, oh_o_next)
+
+        # state update rule, eq (33, 34)
+        dQs = self.__update_Q_s(state_pred_bind, state_pred_mem)
+        dVs = self.__update_V_s(state_pred_bind, state_pred_mem)
+
+        # Memory updates: memorize observation at time t+1; eq (20)
+        model.update_memory(model.state, oh_o_next)                                          
+
+        if normalize: 
+            model.normalize_action() # normalize action
+
+        # increment time 
+        model.inc_time()
+
+        loss = criterion(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
+
+        return dQo + dQs, dVo + dVs, loss
     
     def __update_Q_o(self, oh_o_next_pred, oh_o_next_target):
 
@@ -245,17 +254,15 @@ class POCMLTrainer(CMLTrainer):
         
         update_weight = eta * torch.einsum('k, kmn', oh_o_next_target - oh_o_next_pred, self.Z_q)
 
-        self.model.Q += update_weight
         return update_weight        
 
-    def __update_V_o(self, oh_o_next_pred, oh_o_next_target, oh_a):
+    def __update_V_o(self, oh_o_next_pred, oh_o_next_target):
 
         # TODO scaling factor for update (30)
         eta = self.lr_V_o * self.alpha * self.beta_obs * self.lr_all
 
         update_weight = eta * torch.einsum('k, kmn', oh_o_next_target - oh_o_next_pred, self.Z_v)
 
-        self.model.V += update_weight
         return update_weight 
         
     def __update_Q_s(self, state_pred_bind, state_pred_mem):
@@ -264,14 +271,12 @@ class POCMLTrainer(CMLTrainer):
 
         update_weight = eta * torch.einsum('k, kmn', state_pred_mem - state_pred_bind, self.W_q)
 
-        self.model.Q += update_weight
         return update_weight
 
-    def __update_V_s(self, state_pred_bind, state_pred_mem, oh_a):
+    def __update_V_s(self, state_pred_bind, state_pred_mem):
 
         eta = self.lr_V_s * self.alpha * self.beta_state * self.lr_all
 
         update_weight = eta * torch.einsum('k, kmn', state_pred_mem - state_pred_bind, self.W_v)
         
-        self.model.V += update_weight
         return update_weight

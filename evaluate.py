@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-def accuracy(model, dataloader, mem_cleanup_rate=1):
+def accuracy(model, dataloader):
     total, correct = 0, 0
     confidences = []
 
@@ -36,7 +36,7 @@ def accuracy(model, dataloader, mem_cleanup_rate=1):
             hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
 
             # reweight states
-            model.reweight_state(hd_state_pred_mem, c=mem_cleanup_rate)
+            model.reweight_state(hd_state_pred_mem)
 
             confidences.append(oh_o_next_pred[o_next].item())
             if oh_o_next[torch.argmax(oh_o_next_pred, dim=0)] == 1:
