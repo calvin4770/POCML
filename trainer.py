@@ -6,7 +6,7 @@ from tqdm.notebook import tqdm
 from model import sim, POCML
 
 class CMLTrainer:
-    def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None):
+    def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None, debug =False):
         
         self.model = model
         self.train_loader = train_loader
@@ -15,6 +15,7 @@ class CMLTrainer:
         self.val_loader = val_loader
         self.device = device
         self.norm = norm
+        self.debug = debug
 
     def train(self, epochs = 10):
 
@@ -70,7 +71,10 @@ class POCMLTrainer(CMLTrainer):
                  lr_all = 0.32,
                  reset_every = 1, # reset every N trajectories
                  refactor_memory = False,
-                 normalize = False):
+                 normalize = False,
+                 debug = False,
+                 log = False,
+                 ):
 
         #super.__init__(model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None)
         self.model = model
@@ -93,6 +97,9 @@ class POCMLTrainer(CMLTrainer):
         self.normalize = normalize
         self.reset_every = reset_every
         self.refactor_memory = refactor_memory
+
+        self.debug = debug
+        self.log = log
 
     # # Create tensor reused in the update rule (30 - 33)
     # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
@@ -163,12 +170,13 @@ class POCMLTrainer(CMLTrainer):
                 model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
                 model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
-                print("Current Trajectory", trajectory[0])
-                print("Print initial score", model.get_obs_score_from_memory(model.state))
-                print("Obs similarity based on memory (want close to identity)\n", sim(model.M.T, model.M.T))
-                print("Action similarities\n", model.get_action_similarities())
                 phi_Q = model.get_state_kernel()
-                print("State kernel similarities (want close to identitiy)\n", sim(phi_Q.T, phi_Q.T))
+                if self.debug:
+                    print("Current Trajectory", trajectory[0])
+                    print("Print initial score", model.get_obs_score_from_memory(model.state))
+                    print("Obs similarity based on memory (want close to identity)\n", sim(model.M.T, model.M.T))
+                    print("Action similarities\n", model.get_action_similarities())
+                    print("State kernel similarities (want close to identitiy)\n", sim(phi_Q.T, phi_Q.T))
 
                 # o_pre  is the observation at time t
                 dQ_total = torch.zeros_like(model.Q)
@@ -212,12 +220,13 @@ class POCMLTrainer(CMLTrainer):
         # weight computation, (32), w_hat_k are columns of w_hat
         w_tilde = model.compute_weights(model.M.T)                        # assume one-hot encoding of x_t
 
-        print("Time", model.t)
-        print("o_pre, o_next", o_pre, o_next)
-        print("Predicted obs from action", oh_o_next_pred)
-        print("Predicted state before action (w hat):", w_hat)
-        print("Predicted state after action (u hat):", state_pred_bind)
-        print("Predicted state from obs + memory (u tilde):", state_pred_mem)
+        if self.debug: 
+            print("Time", model.t)
+            print("o_pre, o_next", o_pre, o_next)
+            print("Predicted obs from action", oh_o_next_pred)
+            print("Predicted state before action (w hat):", w_hat)
+            print("Predicted state after action (u hat):", state_pred_bind)
+            print("Predicted state from obs + memory (u tilde):", state_pred_mem)
 
         # update rule, eq (31-34)
         self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
