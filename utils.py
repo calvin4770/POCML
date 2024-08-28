@@ -1,6 +1,10 @@
 import itertools
 from inspect import signature
 
+import random
+import torch
+import numpy as np
+
 def generate_combinations_loader(param_pool):
     """
     Generates all possible combinations of parameters given a dictionary 
@@ -38,3 +42,12 @@ def filter_param(param: dict, obj) -> dict:
     """
     init_params = signature(obj).parameters
     return {k: v for k, v in param.items() if k in init_params}
+
+# Function to set the random seed for reproducibility
+def set_random_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
