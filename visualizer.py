@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
 
-def visualize(distances, legend:str ="Node"):
+def visualize(distances, legend:str ="Node", title:str = "Graph Visualization using MDS"):
     mds = MDS(n_components =2)
     positions = mds.fit_transform(distances)
 
@@ -15,8 +15,8 @@ def visualize(distances, legend:str ="Node"):
         plt.text(x, y, f'{legend} {i}', fontsize=12)
 
     plt.title('Graph Visualization using MDS')
-    plt.xlabel('Dimension 1')
-    plt.ylabel('Dimension 2')
+    plt.xlabel('Dim. 1')
+    plt.ylabel('Dim. 2')
     plt.grid(True)
     plt.show()
 
