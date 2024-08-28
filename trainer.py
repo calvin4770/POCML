@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tqdm.notebook import tqdm
 
+import wandb
+
 from model import sim, POCML
 
 class CMLTrainer:
@@ -98,6 +100,10 @@ class POCMLTrainer(CMLTrainer):
         self.reset_every = reset_every
         self.refactor_memory = refactor_memory
 
+        self.step_ct = 0                                        # step count
+        self.traj_ct = 0                                        # trajectory count
+        self.epoch_ct = 0                                       # epoch count
+
         self.debug = debug
         self.log = log
 
@@ -137,7 +143,15 @@ class POCMLTrainer(CMLTrainer):
         loss_record = []
 
         for _ in tqdm(range(epochs), desc="Epochs"):
-            loss_record += self.train_epoch() # Concatenate the list of losses
+
+            last_loss = self.train_epoch() # Concatenate the list of losses
+            loss_record += last_loss # Concatenate the list of losses
+
+            self.epoch_ct += 1
+            if self.log:
+                wandb.log({"train/mloss_p_epoch": sum(last_loss)/len(last_loss),
+                            "train/epoch_ct": self.epoch_ct})
+        
         return loss_record
     
     ## Naming convention
@@ -171,6 +185,7 @@ class POCMLTrainer(CMLTrainer):
                 model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
                 phi_Q = model.get_state_kernel()
+
                 if self.debug:
                     print("Current Trajectory", trajectory[0])
                     print("Print initial score", model.get_obs_score_from_memory(model.state))
@@ -182,11 +197,24 @@ class POCMLTrainer(CMLTrainer):
                 dQ_total = torch.zeros_like(model.Q)
                 dV_total = torch.zeros_like(model.V)
                 for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
+
                     dQ, dV, loss = self.__one_time_step(model, o_pre, a, o_next, tt, ttt, criterion, normalize=normalize)
                     dQ_total += dQ
                     dV_total += dV
                     loss_record.append(loss.cpu().item())
+
+                    self.step_ct += 1
+                    if self.log:
+                        wandb.log({"train/loss": loss,
+                                   "train/step_ct": self.step_ct,})
+
                 model.update_representations(dQ_total, dV_total, refactor_memory=self.refactor_memory)
+
+                self.traj_ct += 1
+                if self.log:
+                    #print("Debug", loss, len(trajectory[0]))
+                    wandb.log({"train/mloss_p_traj": sum(loss_record[-len(trajectory[0]):])/len(trajectory[0]),
+                               "train/traj_ct": self.step_ct,})
 
         return loss_record
     
