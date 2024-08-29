@@ -214,7 +214,7 @@ class POCMLTrainer(CMLTrainer):
                 if self.log:
                     #print("Debug", loss, len(trajectory[0]))
                     wandb.log({"train/mloss_p_traj": sum(loss_record[-len(trajectory[0]):])/len(trajectory[0]),
-                               "train/traj_ct": self.step_ct,})
+                               "train/traj_ct": self.traj_ct})
 
         return loss_record
     
