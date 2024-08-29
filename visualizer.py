@@ -2,22 +2,27 @@ from sklearn.manifold import MDS
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import wandb
 
-def visualize(distances, legend:str ="Node", title:str = "Graph Visualization using MDS"):
+def visualize(distances, legend:str ="Node", title:str = "Graph Visualization using MDS", log = False):
     mds = MDS(n_components =2)
     positions = mds.fit_transform(distances)
 
-    plt.figure(figsize=(8, 6))
-    plt.scatter(positions[:, 0], positions[:, 1])
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.scatter(positions[:, 0], positions[:, 1])
 
     # Optional: Annotate the points
     for i, (x, y) in enumerate(positions):
-        plt.text(x, y, f'{legend} {i}', fontsize=12)
+        ax.text(x, y, f'{legend} {i}', fontsize=12)
 
-    plt.title('Graph Visualization using MDS')
-    plt.xlabel('Dim. 1')
-    plt.ylabel('Dim. 2')
-    plt.grid(True)
+    ax.set_title('Graph Visualization using MDS')
+    ax.set_xlabel('Dim. 1')
+    ax.set_ylabel('Dim. 2')
+    ax.grid(True)
+
+    if log:
+        wandb.log({title: wandb.Image(fig)})
+
     plt.show()
 
 # our trainer loss plot - flattened 
