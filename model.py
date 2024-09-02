@@ -89,12 +89,15 @@ class POCML(torch.nn.Module):
         self.t += 1
 
     # Initialize state, with the option to pass in the first observation.
-    def init_state(self, obs=None):
+    def init_state(self, obs=None, fixed_start=False):
         phi_Q = self.get_state_kernel()
-        if obs is None:
-            self.state = phi_Q.mean(dim=0)
+        if fixed_start:
+            self.state = phi_Q[:, 0] # arbitrarily choose state 0 as starting state
         else:
-            self.state = self.get_state_from_memory(obs)
+            if obs is None:
+                self.state = phi_Q.mean(dim=0)
+            else:
+                self.state = self.get_state_from_memory(obs)
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
     def init_memory(self, memory=None):
@@ -113,6 +116,9 @@ class POCML(torch.nn.Module):
             if self.decay == "adaptive":
                 state_from_obs = self.get_state_from_memory(obs)
                 s = sim(state_from_obs, state)
+                print("s:", s)
+                self.M[:, torch.argmax(obs)] *= s
+                #self.M *= s
                 self.M += (1 - s) * torch.outer(state, obs)
             else:
                 self.M *= self.decay

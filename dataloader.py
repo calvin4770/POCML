@@ -145,13 +145,22 @@ def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
 
 # Create a dataset of trajectories
 class RandomWalkDataset(Dataset):
-    def __init__(self, adj_matrix, trajectory_length, num_trajectories, items, action_type="unique", args=None):
+    def __init__(self,
+                 adj_matrix,
+                 trajectory_length,
+                 num_trajectories,
+                 items,
+                 action_type="unique",
+                 start_state_idx=None,
+                 args=None):
         self.adj_matrix = adj_matrix
         self.num_trajectories = num_trajectories
         self.trajectory_length = trajectory_length
         self.edges, self.action_indices = edges_from_adjacency(adj_matrix, action_type=action_type, args=args)
-        start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
-        #start_nodes = [torch.randint(0, adj_matrix.size(0), (1,)).tolist()[0]] * num_trajectories # same start node for all
+        if start_state_idx is None:
+            start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
+        else:
+            start_nodes = [start_state_idx] * num_trajectories # same start node for all
         self.data = []
         for node in start_nodes:
             trajectory = strict_random_walk(self.adj_matrix, node, self.trajectory_length, self.action_indices, items)
@@ -363,8 +372,8 @@ class GraphEnv():
             self.n_items = self.size
         self.batch_size = batch_size
         self.num_desired_trajectories = num_desired_trajectories
+        self.start_state_idx = np.random.randint(0, self.n_items) # fixed start state for trajectories if enabled
         self.populate_graph()
-        self.gen_dataset()
 
     # uniformly random observations or identity (unique)
     def populate_graph(self):
@@ -373,16 +382,30 @@ class GraphEnv():
         else:
             self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
 
-    def gen_dataset(self):
+    def gen_dataset(self, batch_size=None, num_desired_trajectories=None, fixed_start=False):
+        if batch_size is None:
+            batch_size = self.batch_size
+        if num_desired_trajectories is None:
+            num_desired_trajectories = self.num_desired_trajectories
 
         action_type = "unique"
         if self.env in ["regular", "two tunnel", "grid"]:
             action_type = self.env
             
-        self.dataset = RandomWalkDataset(self.adj_matrix, self.batch_size,
-                                         self.num_desired_trajectories, self.items, action_type=action_type, args=self.args)
+        # TODO: fixed start
+        start_state_idx = self.start_state_idx if fixed_start else None
+        self.dataset = RandomWalkDataset(
+            self.adj_matrix,
+            batch_size,
+            num_desired_trajectories,
+            self.items,
+            action_type=action_type,
+            start_state_idx=start_state_idx,
+            args=self.args
+        )
         if self.env not in ["regular", "two tunnel", "grid"]:
             self.n_actions = len(self.dataset.action_indices)
+        return self.dataset.data
 
     def populate_graph_preset(self):
         if self.env == 'two tunnel':

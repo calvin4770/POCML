@@ -160,33 +160,43 @@ class POCMLTrainer(CMLTrainer):
             for tt, trajectory in enumerate(self.train_loader):
 
                 model.init_time()
-                
-                if tt % self.reset_every == 0:             # memory have to option to reset per trajectory
-                    model.init_memory()
-                                                            # TODO memory should have the option to reset per graph instance
 
                 oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
-                
-                model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
-                model.update_memory(model.state, oh_o_first)        #  memorize the first observation
+                # TODO reset graph instance
+                # every time we reset, use the first trajectory to populate memory only
+                if False:#tt % self.reset_every == 0:
+                    model.init_memory()
+                    model.init_state(obs = oh_o_first, fixed_start=True)
+                    model.update_memory(model.state, oh_o_first)        #  memorize the first observation
+                    for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
+                        dQ, dV, loss = self.__one_time_step(model, o_pre, a, o_next, tt, ttt, criterion, normalize=normalize)
+                else:
+                    model.init_memory()
+                    model.init_state(obs = oh_o_first, fixed_start=True)
+                    model.update_memory(model.state, oh_o_first)        #  memorize the first observation
+                    for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
+                        dQ, dV, loss = self.__one_time_step(model, o_pre, a, o_next, tt, ttt, criterion, normalize=normalize)
+                    # train model
+                    model.init_state(obs = oh_o_first, fixed_start=True) #  treat the first observation as the spacial case. 
+                    model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
-                phi_Q = model.get_state_kernel()
-                if self.debug:
-                    print("Current Trajectory", trajectory[0])
-                    print("Print initial score", model.get_obs_score_from_memory(model.state))
-                    print("Obs similarity based on memory (want close to identity)\n", sim(model.M.T, model.M.T))
-                    print("Action similarities\n", model.get_action_similarities())
-                    print("State kernel similarities (want close to identitiy)\n", sim(phi_Q.T, phi_Q.T))
+                    phi_Q = model.get_state_kernel()
+                    if self.debug:
+                        print("Current Trajectory", trajectory[0])
+                        print("Print initial score", model.get_obs_score_from_memory(model.state))
+                        print("Obs similarity based on memory (want close to identity)\n", sim(model.M.T, model.M.T))
+                        print("Action similarities\n", model.get_action_similarities())
+                        print("State kernel similarities (want close to identitiy)\n", sim(phi_Q.T, phi_Q.T))
 
-                # o_pre  is the observation at time t
-                dQ_total = torch.zeros_like(model.Q)
-                dV_total = torch.zeros_like(model.V)
-                for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
-                    dQ, dV, loss = self.__one_time_step(model, o_pre, a, o_next, tt, ttt, criterion, normalize=normalize)
-                    dQ_total += dQ
-                    dV_total += dV
-                    loss_record.append(loss.cpu().item())
-                model.update_representations(dQ_total, dV_total, refactor_memory=self.refactor_memory)
+                    # o_pre  is the observation at time t
+                    dQ_total = torch.zeros_like(model.Q)
+                    dV_total = torch.zeros_like(model.V)
+                    for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
+                        dQ, dV, loss = self.__one_time_step(model, o_pre, a, o_next, tt, ttt, criterion, normalize=normalize)
+                        dQ_total += dQ
+                        dV_total += dV
+                        loss_record.append(loss.cpu().item())
+                    model.update_representations(dQ_total, dV_total, refactor_memory=self.refactor_memory)
 
         return loss_record
     
@@ -247,6 +257,7 @@ class POCMLTrainer(CMLTrainer):
             dVs = torch.zeros_like(dVs)
 
         # Memory updates: memorize observation at time t+1; eq (20)
+        print(f"added {oh_o_next} to memory")
         model.update_memory(model.state, oh_o_next)                                          
 
         if normalize: 
