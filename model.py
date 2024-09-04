@@ -5,19 +5,19 @@ import numpy as np
 # Computes the similarity between random feature vectors.
 # Input shape:
 # x: [out_dim]; y: [out_dim] OR
-# x: [B, out_dim]; y: [out_dim] OR
-# x: [out_dim]; y: [B, out_dim] OR
-# x: [B1, out_dim]; y: [B2, out_dim]
+# x: [out_dim, B]; y: [out_dim] OR
+# x: [out_dim]; y: [out_dim, B] OR
+# x: [out_dim, B1]; y: [out_dim, B2]
 def sim(x, y):
-    D = x.shape[-1]
+    D = x.shape[0]
     if len(x.shape) == 1 and len(y.shape) == 1:
-        return (x @ y.conj()).real / D
+        return F.relu((x @ y.conj()).real / D)
     elif len(x.shape) == 2 and len(y.shape) == 1:
-        return torch.einsum("ij,j->i", x, y.conj()).real / D
+        return F.relu(torch.einsum("ji,j->i", x, y.conj()).real / D)
     elif len(x.shape) == 1 and len(y.shape) == 2:
-        return torch.einsum("j,ij->i", x, y.conj()).real / D
+        return F.relu(torch.einsum("j,ji->i", x, y.conj()).real / D)
     else:
-        return torch.einsum("ri,ci->rc", x, y.conj()).real / D
+        return F.relu(torch.einsum("ir,ic->rc", x, y.conj()).real / D)
 
 class RandomFeatureMap(torch.nn.Module):
     def __init__(self, in_dim, out_dim, alpha=1):
@@ -31,8 +31,8 @@ class RandomFeatureMap(torch.nn.Module):
     # Applies the random feature map.
     # Input shape: [in_dim]
     # Output shape: [out_dim], OR
-    # Input shape: [..., in_dim]
-    # Output shape: [..., out_dim]
+    # Input shape: [in_dim, ...]
+    # Output shape: [out_dim, ...]
     def forward(self, x):
         if len(x.shape) == 1:
             out = torch.exp(1j * self.W @ x.to(torch.complex64) / self.alpha)
@@ -40,7 +40,7 @@ class RandomFeatureMap(torch.nn.Module):
         else:
             # n = torch.norm(x, p=2, dim=-1, keepdim=True)
             n = 1
-            out = torch.exp(1j * torch.einsum("ij,...j->...i", self.W, (x/n).to(torch.complex64)) / self.alpha )
+            out = torch.exp(1j * torch.einsum("ij,j...->i...", self.W, (x/n).to(torch.complex64)) / self.alpha )
             # out = torch.exp(1j * ((x/n).to(torch.complex64) @ self.W.T) / self.alpha ) / self.sqrt_out_dim
             #return out/torch.norm(out, p=2, dim=-1, keepdim=True)
             return out
@@ -67,11 +67,7 @@ class POCML(torch.nn.Module):
         self.n_actions = n_actions # number of actions
         self.state_dim = state_dim # dimension of state space
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
-        self.beta_obs = beta_obs # temperature parameter for predicting observation
-        self.beta_state = beta_state # temperature parameter for predicting state (after clean up)
         self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
-        self.decay = decay # decay parameter for memory
-        self.mem_reweight_rate = mem_reweight_rate
 
         self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
         self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
@@ -90,84 +86,53 @@ class POCML(torch.nn.Module):
 
     # Initialize state, with the option to pass in the first observation.
     def init_state(self, obs=None, fixed_start=False):
-        phi_Q = self.get_state_kernel()
         if fixed_start:
-            self.state = phi_Q[:, 0] # arbitrarily choose state 0 as starting state
+            self.u = torch.zeros(self.n_states)
+            self.u[0] = 1
         else:
             if obs is None:
-                self.state = phi_Q.mean(dim=0)
+                self.u = torch.ones(self.n_states) / self.n_states
             else:
-                self.state = self.get_state_from_memory(obs)
+                self.u = self.get_state_from_memory(obs)
+        self.clean_up()
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
-    def init_memory(self, memory=None):
-        self.item_count = 0
+    # eps > 0 to ensure we don't divide by zero when retrieving state/obs from memory
+    def init_memory(self, memory=None, eps=1e-6):
         if not self.memory_bypass:
             if memory is None:
-                self.M = torch.nn.Parameter(torch.zeros(self.random_feature_dim, self.n_obs, dtype=torch.complex64), requires_grad=False)
+                self.M = torch.nn.Parameter(torch.ones(self.n_states, self.n_obs) * eps, requires_grad=False)
             else:
                 self.M = memory
         else:
-            self.M = self.get_state_kernel()
+            self.M = torch.eye(self.n_states)
+        self.state_counts = self.M.sum(dim=1)
+        self.obs_counts = self.M.sum(dim=0)
 
-    def update_memory(self, state, obs):
-        self.item_count += 1
+    def update_memory(self, u, x):
         if not self.memory_bypass:
-            if self.decay == "adaptive":
-                state_from_obs = self.get_state_from_memory(obs)
-                s = sim(state_from_obs, state)
-                print("s:", s)
-                self.M[:, torch.argmax(obs)] *= s
-                #self.M *= s
-                self.M += (1 - s) * torch.outer(state, obs)
-            else:
-                self.M *= self.decay
-                self.M += torch.outer(state, obs)
-        else:
-            self.M = self.get_state_kernel()
+            self.state_counts += u
+            self.obs_counts += x
+            self.M += torch.outer(u, x)
 
     # Retrieves state from memory given obs (Eq. 22).
-    def get_state_from_memory(self, obs):
-        return self.M @ obs.to(torch.complex64)
+    def get_state_from_memory(self, x):
+        return self.M @ (x / self.obs_counts)
 
     # Retrieves obs from memory given state (Eq. 21).
-    def get_obs_from_memory(self, state):
-        score = self.get_obs_score_from_memory(state)
-        return F.softmax(score, dim=0)
-    
-    def get_obs_score_from_memory(self, state):
-        return self.beta_obs * sim(self.M.T, state)
-
-    def get_state_score(self, state):
-        phi_Q = self.get_state_kernel()
-        return self.beta_state * sim(phi_Q.T, state)
-
-    def clean_up(self, state):
-        phi_Q = self.get_state_kernel()
-        weights = self.compute_weights(state)
-        new_state = phi_Q @ weights.to(torch.complex64)
-        self.state = new_state
-        return weights
-    
-    def reweight_state(self, state_from_mem):
-        if self.mem_reweight_rate == "adaptive":
-            state_score = self.get_state_score(self.state)
-            state_mem_score = self.get_state_score(state_from_mem)
-            state_entropy = self.__entropy_from_logits(state_score)
-            state_mem_entropy = self.__entropy_from_logits(state_mem_score)
-            c = state_entropy / (state_entropy + state_mem_entropy)
+    # input shape: [n_s] OR [..., n_s]
+    def get_obs_from_memory(self, u):
+        if len(u.shape) == 1:
+            return self.M.T @ (u / self.state_counts)
         else:
-            c = self.mem_reweight_rate
-        self.state = (1-c) * self.state + c * (state_from_mem)
+            return torch.einsum("ij,...j,j->...i", self.M.T, u, 1 / self.state_counts)
 
-    def __entropy_from_logits(self, logits):
-        return -torch.sum(F.softmax(logits, dim=0) * F.log_softmax(logits, dim=0))
-    
-    # Compute weight given a state
-    def compute_weights(self, state):
-        score = self.get_state_score(state)
-        weights = F.softmax(score, dim=0)
-        return weights
+    # returns \hat{u}_t given \phi(\hat{s}_t')
+    def get_expected_state(self, state, eps=1e-6):
+        phi_Q = self.get_state_kernel()
+        sims = sim(phi_Q, state) + eps # prevent div by 0
+        self.u = sims / sims.sum()
+        return self.u
     
     # Update state given action (pre clean-up) (Eq. 18).
     def update_state(self, action):
@@ -176,17 +141,17 @@ class POCML(torch.nn.Module):
         self.state = self.state * phi_v
         return self.state
     
-    def update_representations(self, dQ, dV, refactor_memory=False):
-        if refactor_memory:
-            weights = F.softmax(sim(self.get_state_kernel().T, self.M.T), dim=0)
-        self.Q += dQ
-        self.V += dV
-        if refactor_memory:
-            self.M = torch.nn.Parameter(
-                self.get_state_kernel() @ weights.to(torch.complex64),
-                requires_grad=False
-            )
+    def update_state_given_obs(self, oh_o_next, eps=1e-6):
+        x_given_u = self.get_obs_from_memory(torch.eye(self.n_states)) @ oh_o_next
+        u = (self.u + eps) * (x_given_u + eps)
+        print("!!!", self.u, x_given_u, u)
+        self.u = u / u.sum()
+        return self.u
 
+    def clean_up(self):
+        phi_Q = self.get_state_kernel()
+        self.state = phi_Q @ self.u.to(torch.complex64)
+        return self.state
 
     # Given the goal state, return the utilities for all actions (Eq. 35).
     def get_utilities(self, state):
@@ -282,7 +247,7 @@ class POCML(torch.nn.Module):
         return (self.V.T @ self.V).detach()
     
     def get_action_kernel(self):
-        phi_V = self.random_feature_map(self.V.T).T
+        phi_V = self.random_feature_map(self.V)
         return phi_V.detach()
     
     def get_state_differences(self):
@@ -292,9 +257,6 @@ class POCML(torch.nn.Module):
         return (self.Q.T @ self.Q).detach()
 
     def get_state_kernel(self):
-        phi_Q = self.random_feature_map(self.Q.T).T
+        phi_Q = self.random_feature_map(self.Q)
         return phi_Q.detach()
-        
-    def get_memory_kernel(self):
-        return sim(self.M.T, self.M)
 
