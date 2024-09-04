@@ -101,11 +101,11 @@ class POCML(torch.nn.Module):
     def init_memory(self, memory=None, eps=1e-6):
         if not self.memory_bypass:
             if memory is None:
-                self.M = torch.nn.Parameter(torch.ones(self.n_states, self.n_obs) * eps, requires_grad=False)
+                self.M = torch.nn.Parameter(torch.randn(self.n_states, self.n_obs).abs() * eps + torch.eye(self.n_states), requires_grad=False)
             else:
-                self.M = memory
+                self.M = torch.nn.Parameter(memory, requires_grad=False)
         else:
-            self.M = torch.eye(self.n_states)
+            self.M = torch.nn.Parameter(torch.eye(self.n_states), requires_grad=False)
         self.state_counts = self.M.sum(dim=1)
         self.obs_counts = self.M.sum(dim=0)
 

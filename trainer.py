@@ -147,6 +147,7 @@ class POCMLTrainer(CMLTrainer):
                 oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
                 # TODO reset graph instance
                 if tt % self.reset_every == 0:
+                    #model.init_memory(model.M.detach() / 10)
                     model.init_memory()
                 else:
                     # train model
@@ -177,7 +178,7 @@ class POCMLTrainer(CMLTrainer):
         
         # Compute and apply update rule
         self.__prep_update(oh_o_next, oh_a)
-        dQ = self.__update_Q(oh_u_pre)
+        self.__update_Q(oh_u_pre)
         self.__update_V(oh_a, oh_u_pre)
 
         # Clean up state \phi(\hat{s}_{t+1})
