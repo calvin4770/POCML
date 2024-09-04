@@ -66,13 +66,10 @@ class POCMLTrainer(CMLTrainer):
                  criterion=None,
                  val_loader=None,
                  device=None,
-                 lr_Q_o = 1.,
-                 lr_V_o = 0.1,
-                 lr_Q_s = 0,
-                 lr_V_s = 0,
+                 lr_Q = 1.,
+                 lr_V = 0.1,
                  lr_all = 0.32,
                  reset_every = 1, # reset every N trajectories
-                 refactor_memory = False,
                  normalize = False,
                  debug = False,
                  log = False,
@@ -88,17 +85,12 @@ class POCMLTrainer(CMLTrainer):
         self.norm = norm
 
         # POCML model param for training
-        self.beta_obs = model.beta_obs                          # observation prediction temperature
-        self.beta_state = model.beta_state                      # state prediction temperature
         self.alpha = model.random_feature_map.alpha             # (inverse) lengscale of the RBF
-        self.lr_Q_o = lr_Q_o
-        self.lr_V_o = lr_V_o
-        self.lr_Q_s = lr_Q_s
-        self.lr_V_s = lr_V_s
+        self.lr_Q = lr_Q
+        self.lr_V = lr_V
         self.lr_all = lr_all
         self.normalize = normalize
         self.reset_every = reset_every
-        self.refactor_memory = refactor_memory
 
         self.step_ct = 0                                        # step count
         self.traj_ct = 0                                        # trajectory count
@@ -109,34 +101,26 @@ class POCMLTrainer(CMLTrainer):
 
     # # Create tensor reused in the update rule (30 - 33)
     # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
-    def __prep_update(self, w_tilde, w_hat, oh_a):
+    def __prep_update(self, oh_o_next, oh_a):
         
-        model = self.model 
+        model: POCML = self.model
         Q = model.Q
-
-        omega = torch.einsum('ki,j->ijk', w_tilde, w_hat)                 # omega_ijk = w_tilde_{ki} * w_hat_{j}
 
         v_t = model.V @ oh_a                                # v_t []
         s_hat = (Q.T) + v_t[None, :]                        # s_hat_j = (s_j + v_t)
-        diff_s = (Q.T)[:, None, :] - s_hat[None, :, :]      # generate n_s * n_s * n tensor [s_i - s_hat_j]_i,j
-        
-        diff_s_squared_norm = torch.sum(diff_s ** 2, dim=-1)
+        self.diff_s = (Q.T)[:, None, :] - s_hat[None, :, :]      # generate n_s * n_s * n tensor [s_i - s_hat_j]_i,j
 
-        # Approximating K with phi(Q)
-        # K = ((model.random_feature_map(model.Q.T)) @ (model.random_feature_map(s_hat).T)).real / D
+        phi_Q = model.get_state_kernel()
+        phi_s = model.state # \phi(\hat{s}_t)
+        phi_v = model.random_feature_map(v_t).unsqueeze(dim=1)
 
-        # Compute exact K 
-        K = torch.exp(-self.alpha * diff_s_squared_norm)
+        sims_pairwise = sim(phi_Q, phi_Q * phi_v)
+        sims_s_hat = sim(phi_Q, phi_s)
+        p = model.get_obs_from_memory(torch.eye(model.n_states)) @ oh_o_next
 
-        self.update_tensor = torch.einsum('j,ij,ijm->ijm', w_hat, K, diff_s)
-
-        u = torch.eye(self.model.n_states).to(self.device)        # TODO double check if this can be optimized
-        self.Z_q = -1 * torch.einsum('ik,ijm,in->kmn', w_tilde, self.update_tensor, u)
-        self.Z_v = torch.einsum('ik,ijm,n->kmn', w_tilde, self.update_tensor, oh_a)
-
-        self.W_q = -1 * torch.einsum('ijm,in->imn', self.update_tensor, u)
-        self.W_v = torch.einsum('ijm,n->imn', self.update_tensor, oh_a)
-
+        r1 = torch.einsum("i,ij->ij", p, sims_pairwise) / (p @ sims_s_hat)
+        r2 = sims_pairwise / sims_s_hat.sum()
+        self.gamma = r1 - r2
 
     def train(self, epochs:int = 10) -> list:
 
@@ -165,7 +149,6 @@ class POCMLTrainer(CMLTrainer):
             model: POCML = self.model
             device = self.device
             normalize = self.normalize
-            criterion = nn.CrossEntropyLoss()
             loss_record = []
 
             # memory transfer option/reset rate + for decay design
@@ -174,41 +157,33 @@ class POCMLTrainer(CMLTrainer):
             for tt, trajectory in enumerate(self.train_loader):
 
                 model.init_time()
-                
-                if tt % self.reset_every == 0:             # memory have to option to reset per trajectory
-                    model.init_memory()
-                                                            # TODO memory should have the option to reset per graph instance
 
                 oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
-                
-                model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
-                model.update_memory(model.state, oh_o_first)        #  memorize the first observation
 
-                phi_Q = model.get_state_kernel()
+                # TODO reset graph instance
+                if tt % self.reset_every == 0:
+                    #model.init_memory(model.M.detach() / 10)
+                    model.init_memory()
+                else:
+                    # train model
+                    model.init_state(obs = oh_o_first, fixed_start=False) #  treat the first observation as the spacial case. 
+                    model.update_memory(model.u, oh_o_first)        #  memorize the first observation
 
-                if self.debug:
-                    print("Current Trajectory", trajectory[0])
-                    print("Print initial score", model.get_obs_score_from_memory(model.state))
-                    print("Obs similarity based on memory (want close to identity)\n", sim(model.M.T, model.M.T))
-                    print("Action similarities\n", model.get_action_similarities())
-                    print("State kernel similarities (want close to identitiy)\n", sim(phi_Q.T, phi_Q.T))
+                    phi_Q = model.get_state_kernel()
+                    if self.debug:
+                        print("Current Trajectory", trajectory[0])
+                        print("Action similarities\n", model.get_action_similarities())
+                        print("State kernel similarities (want close to identitiy)\n", sim(phi_Q, phi_Q))
 
-                # o_pre  is the observation at time t
-                dQ_total = torch.zeros_like(model.Q)
-                dV_total = torch.zeros_like(model.V)
-                for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
-
-                    dQ, dV, loss = self.__one_time_step(model, o_pre, a, o_next, tt, ttt, criterion, normalize=normalize)
-                    dQ_total += dQ
-                    dV_total += dV
-                    loss_record.append(loss.cpu().item())
-
-                    self.step_ct += 1
-                    if self.log:
-                        wandb.log({"train/loss": loss,
-                                   "train/step_ct": self.step_ct,})
-
-                model.update_representations(dQ_total, dV_total, refactor_memory=self.refactor_memory)
+                    # o_pre  is the observation at time t
+                    for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
+                        loss = self.__one_time_step(model, o_pre, a, o_next, normalize=normalize)
+                        loss_record.append(loss.cpu().item())
+                        
+                        self.step_ct += 1
+                        if self.log:
+                            wandb.log({"train/loss": loss,
+                                       "train/step_ct": self.step_ct,})
 
                 self.traj_ct += 1
                 if self.log:
@@ -218,105 +193,53 @@ class POCMLTrainer(CMLTrainer):
 
         return loss_record
     
-    def __one_time_step(self, model: POCML, o_pre, a, o_next, tt, ttt, criterion, normalize=False):
-        oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
+    def __one_time_step(self, model: POCML, o_pre, a, o_next, normalize=False):
         oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
         oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
         
-        # weight computation of state at time t (before action); eq (31)
-        w_hat = model.compute_weights(model.state)
+        oh_u_pre = model.u # u_t
+        hd_s_pred_bind_precleanup = model.update_state(oh_a) # update state by binding action
+        oh_u_next = model.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
+        oh_o_next_pred = model.get_obs_from_memory(oh_u_next) # predict observation with updated state
+        
+        # Compute and apply update rule
+        self.__prep_update(oh_o_next, oh_a)
+        self.__update_Q(oh_u_pre)
+        self.__update_V(oh_a, oh_u_pre)
 
-        # update state by binding action at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
-        hd_s_pred_bind_precleanup = model.update_state(oh_a)
+        # Clean up state \phi(\hat{s}_{t+1})
+        #model.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
+        model.clean_up()
 
-        # clean up updated state
-        weights = model.clean_up(hd_s_pred_bind_precleanup)
-        hd_s_pred_bind = model.state
+        # Update memory
+        model.update_memory(oh_u_next, oh_o_next)
 
-        # predict observation with updated state
-        oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
+        if normalize: 
+            model.normalize_action() # normalize action
 
-        # infer state from observation at time t+1 via memory, s^{tilde}_{t+1} eq (22)
-        hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
+        model.inc_time()
 
-        # reweight states using memory
-        model.reweight_state(hd_state_pred_mem)
-
-        state_pred_bind = weights                                       # eq (24)  u^{hat}_{t+1}
-        state_pred_mem = model.compute_weights(hd_state_pred_mem)       # eq (25)  u^tilde}_{t+1}
-
-        # weight computation, (32), w_hat_k are columns of w_hat
-        w_tilde = model.compute_weights(model.M.T)                        # assume one-hot encoding of x_t
+        loss = -torch.log(oh_o_next_pred[o_next]) # cross entropy
 
         if self.debug: 
             print("Time", model.t)
             print("o_pre, o_next", o_pre, o_next)
             print("Predicted obs from action", oh_o_next_pred)
-            print("Predicted state before action (w hat):", w_hat)
-            print("Predicted state after action (u hat):", state_pred_bind)
-            print("Predicted state from obs + memory (u tilde):", state_pred_mem)
+            print("Expected previous state", oh_u_pre)
+            print("Expected next state", oh_u_next)
+            #print("Expected next state given obs", model.u)
 
-        # update rule, eq (31-34)
-        self.__prep_update(w_tilde, w_hat, oh_a)                       # prepare for update, eq (31-34)
-
-        # obsevation update rule, eq (31, 32)
-        dQo = self.__update_Q_o(oh_o_next_pred, oh_o_next)
-        dVo = self.__update_V_o(oh_o_next_pred, oh_o_next)
-
-        # state update rule, eq (33, 34)
-        dQs = self.__update_Q_s(state_pred_bind, state_pred_mem)
-        dVs = self.__update_V_s(state_pred_bind, state_pred_mem)
-
-        # don't predict if you've never seen it before
-        if model.get_state_from_memory(oh_o_next).sum() == 0:
-            dQo = torch.zeros_like(dQo)
-            dVo = torch.zeros_like(dVo)
-            dQs = torch.zeros_like(dQs)
-            dVs = torch.zeros_like(dVs)
-
-        # Memory updates: memorize observation at time t+1; eq (20)
-        model.update_memory(model.state, oh_o_next)                                          
-
-        if normalize: 
-            model.normalize_action() # normalize action
-
-        # increment time 
-        model.inc_time()
-
-        loss = criterion(model.get_obs_score_from_memory(hd_s_pred_bind), o_next)
-
-        return dQo + dQs, dVo + dVs, loss
+        return loss
     
-    def __update_Q_o(self, oh_o_next_pred, oh_o_next_target):
+    def __update_Q(self, oh_u_pre):
+        eta = self.lr_Q * self.alpha * self.lr_all
+        u = torch.eye(self.model.n_states).to(self.device)
+        dQ = eta * torch.einsum("ij,j,ijk,il->kl", self.gamma, oh_u_pre, -self.diff_s, u)
+        self.model.Q += dQ
+        return dQ
 
-        # TODO scaling factor for update (29)
-        eta = self.lr_Q_o * self.alpha * self.beta_obs * self.lr_all
-        
-        update_weight = eta * torch.einsum('k, kmn', oh_o_next_target - oh_o_next_pred, self.Z_q)
-
-        return update_weight        
-
-    def __update_V_o(self, oh_o_next_pred, oh_o_next_target):
-
-        # TODO scaling factor for update (30)
-        eta = self.lr_V_o * self.alpha * self.beta_obs * self.lr_all
-
-        update_weight = eta * torch.einsum('k, kmn', oh_o_next_target - oh_o_next_pred, self.Z_v)
-
-        return update_weight 
-        
-    def __update_Q_s(self, state_pred_bind, state_pred_mem):
-
-        eta = self.lr_Q_s * self.alpha * self.beta_state * self.lr_all
-
-        update_weight = eta * torch.einsum('k, kmn', state_pred_mem - state_pred_bind, self.W_q)
-
-        return update_weight
-
-    def __update_V_s(self, state_pred_bind, state_pred_mem):
-
-        eta = self.lr_V_s * self.alpha * self.beta_state * self.lr_all
-
-        update_weight = eta * torch.einsum('k, kmn', state_pred_mem - state_pred_bind, self.W_v)
-        
-        return update_weight
+    def __update_V(self, oh_a, oh_u_pre):
+        eta = self.lr_V * self.alpha * self.lr_all
+        dV = eta * torch.einsum("ij,j,ijk,l->kl", self.gamma, oh_u_pre, self.diff_s, oh_a)
+        self.model.V += dV
+        return dV
