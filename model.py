@@ -98,7 +98,7 @@ class POCML(torch.nn.Module):
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
     # eps > 0 to ensure we don't divide by zero when retrieving state/obs from memory
-    def init_memory(self, memory=None, eps=1e-6):
+    def init_memory(self, memory=None, eps=1e-4):
         if not self.memory_bypass:
             if memory is None:
                 self.M = torch.nn.Parameter(torch.randn(self.n_states, self.n_obs).abs() * eps + torch.eye(self.n_states), requires_grad=False)
@@ -128,11 +128,13 @@ class POCML(torch.nn.Module):
             return torch.einsum("ij,...j,j->...i", self.M.T, u, 1 / self.state_counts)
 
     # returns \hat{u}_t given \phi(\hat{s}_t')
-    def get_expected_state(self, state, eps=1e-6):
+    def get_expected_state(self, state, eps=1e-4, in_place=True):
         phi_Q = self.get_state_kernel()
         sims = sim(phi_Q, state) + eps # prevent div by 0
-        self.u = sims / sims.sum()
-        return self.u
+        u = sims / sims.sum()
+        if in_place:
+            self.u = u
+        return u
     
     # Update state given action (pre clean-up) (Eq. 18).
     def update_state(self, action):
@@ -141,10 +143,9 @@ class POCML(torch.nn.Module):
         self.state = self.state * phi_v
         return self.state
     
-    def update_state_given_obs(self, oh_o_next, eps=1e-6):
+    def update_state_given_obs(self, oh_o_next, eps=1e-4):
         x_given_u = self.get_obs_from_memory(torch.eye(self.n_states)) @ oh_o_next
         u = (self.u + eps) * (x_given_u + eps)
-        print("!!!", self.u, x_given_u, u)
         self.u = u / u.sum()
         return self.u
 

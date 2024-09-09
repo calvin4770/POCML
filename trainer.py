@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
+
 from tqdm.notebook import tqdm
+from copy import deepcopy
 
 import wandb
 
@@ -21,10 +24,17 @@ class CMLTrainer:
 
     def train(self, epochs = 10):
 
+        best_model = None
+        best_loss = 1e10
         loss_record = []
         for _ in tqdm(range(epochs), desc="Epochs"):
-            loss_record += self.train_epoch() # Concatenate the list of losses
-        return loss_record
+            losses = self.train_epoch()
+            mean_loss = np.mean(losses)
+            loss_record += losses # Concatenate the list of losses
+            if mean_loss < best_loss:
+                best_loss, best_model = mean_loss, deepcopy(self.model)
+
+        return np.array(loss_record).reshape(epochs,-1), best_model
 
     def train_epoch(self):
 
@@ -69,7 +79,8 @@ class POCMLTrainer(CMLTrainer):
                  lr_Q = 1.,
                  lr_V = 0.1,
                  lr_all = 0.32,
-                 reset_every = 1, # reset every N trajectories
+                 reset_every = 1, # reset every N trajectories,
+                 update_state_given_obs=False,
                  normalize = False,
                  debug = False,
                  log = False,
@@ -91,6 +102,7 @@ class POCMLTrainer(CMLTrainer):
         self.lr_all = lr_all
         self.normalize = normalize
         self.reset_every = reset_every
+        self.update_state_given_obs = update_state_given_obs
 
         self.step_ct = 0                                        # step count
         self.traj_ct = 0                                        # trajectory count
@@ -124,19 +136,25 @@ class POCMLTrainer(CMLTrainer):
 
     def train(self, epochs:int = 10) -> list:
 
+        best_model = None
+        best_loss = 1e10
         loss_record = []
 
-        for _ in tqdm(range(epochs), desc="Epochs"):
-
+        for epoch in tqdm(range(epochs), desc="Epochs"):
+            if self.debug:
+                print(f"===========Epoch {epoch}===========")
             last_loss = self.train_epoch() # Concatenate the list of losses
             loss_record += last_loss # Concatenate the list of losses
+            mean_loss = np.mean(last_loss)
+            if mean_loss < best_loss:
+                best_loss, best_model = mean_loss, deepcopy(self.model)
 
             self.epoch_ct += 1
             if self.log:
-                wandb.log({"train/mloss_p_epoch": sum(last_loss)/len(last_loss),
+                wandb.log({"train/mloss_p_epoch": mean_loss,
                             "train/epoch_ct": self.epoch_ct})
         
-        return loss_record
+        return np.array(loss_record).reshape(epochs,-1), best_model
     
     ## Naming convention
     #    hd_, sa_, oh_/*: respective objects in HD space, state-action space, and ``one_hot" space
@@ -208,7 +226,8 @@ class POCMLTrainer(CMLTrainer):
         self.__update_V(oh_a, oh_u_pre)
 
         # Clean up state \phi(\hat{s}_{t+1})
-        #model.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
+        if self.update_state_given_obs:
+            model.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
         model.clean_up()
 
         # Update memory
@@ -224,10 +243,11 @@ class POCMLTrainer(CMLTrainer):
         if self.debug: 
             print("Time", model.t)
             print("o_pre, o_next", o_pre, o_next)
-            print("Predicted obs from action", oh_o_next_pred)
             print("Expected previous state", oh_u_pre)
             print("Expected next state", oh_u_next)
-            #print("Expected next state given obs", model.u)
+            if self.update_state_given_obs:
+                print("Expected next state given obs", model.u)
+            print("Predicted obs from action", oh_o_next_pred)
 
         return loss
     

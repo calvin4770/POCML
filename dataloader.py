@@ -341,10 +341,10 @@ class GraphEnv():
             middle_tunnel_length = args["middle_tunnel_length"]
             self.adj_matrix = construct_two_tunnel_graph(
                 tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
-            # TODO: assignc number of actions
+            self.n_actions = 4
         elif env == 'regular':
             n_nodes = args["n_nodes"]
-            self.n_action = k = args["k"]
+            self.n_actions = k = args["k"]
             self.adj_matrix = construct_regular_graph(n_nodes, k)
         
         self.env = env

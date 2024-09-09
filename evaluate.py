@@ -11,32 +11,25 @@ def accuracy(model, dataloader):
         oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
                 
         model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
-        model.update_memory(model.state, oh_o_first)        #  memorize the first observation
+        #model.update_memory(model.state, oh_o_first)        #  memorize the first observation
         
         for o_pre, a, o_next in trajectory[0]:
 
-            oh_o_pre = F.one_hot(o_pre, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
             oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
             oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
             
-            # weight computation before action; at time t
-            w_hat = model.compute_weights(model.state)
+            hd_s_pred_bind_precleanup = model.update_state(oh_a) # update state by binding action
+            oh_u_next = model.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
+            oh_o_next_pred = model.get_obs_from_memory(oh_u_next) # predict observation with updated state
 
-            # update state by binding action at time t+1, s^{hat}^{prime}_{t+1}, eq (18)
-            hd_s_pred_bind_precleanup = model.update_state(oh_a)
+            # Clean up state \phi(\hat{s}_{t+1})
+            model.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
+            model.clean_up()
 
-            # clean up updated state
-            model.clean_up(hd_s_pred_bind_precleanup)
-            hd_s_pred_bind = model.state            
+            # Update memory
+            #model.update_memory(oh_u_next, oh_o_next)
 
-            # predict observation using updated state
-            oh_o_next_pred = model.get_obs_from_memory(hd_s_pred_bind)
-
-            # infer state at time t+1 via memory, s^{tilde}_{t+1} eq (22)
-            hd_state_pred_mem = model.get_state_from_memory(oh_o_next)
-
-            # reweight states
-            model.reweight_state(hd_state_pred_mem)
+            model.inc_time()
 
             confidences.append(oh_o_next_pred[o_next].item())
             if oh_o_next[torch.argmax(oh_o_next_pred, dim=0)] == 1:
@@ -62,7 +55,7 @@ def state_transition_consistency(model, env):
             action_idx = node_to_action_matrix[src][tgt]
             if action_idx != -1:
                 pred_state = phi_Q[:, src] * phi_V[:, action_idx]
-                ps = model.compute_weights(pred_state)
+                ps = model.get_expected_state(pred_state, in_place=False)
                 confidences.append(ps[tgt].item())
                 if torch.argmax(ps) == tgt:
                     correct += 1
