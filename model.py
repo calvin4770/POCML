@@ -8,16 +8,17 @@ import numpy as np
 # x: [out_dim, B]; y: [out_dim] OR
 # x: [out_dim]; y: [out_dim, B] OR
 # x: [out_dim, B1]; y: [out_dim, B2]
-def sim(x, y):
+def sim(x, y, eps=1e-4):
+    relu = lambda x: torch.maximum(x, torch.ones_like(x) * eps)
     D = x.shape[0]
     if len(x.shape) == 1 and len(y.shape) == 1:
-        return F.relu((x @ y.conj()).real / D)
+        return relu((x @ y.conj()).real / D)
     elif len(x.shape) == 2 and len(y.shape) == 1:
-        return F.relu(torch.einsum("ji,j->i", x, y.conj()).real / D)
+        return relu(torch.einsum("ji,j->i", x, y.conj()).real / D)
     elif len(x.shape) == 1 and len(y.shape) == 2:
-        return F.relu(torch.einsum("j,ji->i", x, y.conj()).real / D)
+        return relu(torch.einsum("j,ji->i", x, y.conj()).real / D)
     else:
-        return F.relu(torch.einsum("ir,ic->rc", x, y.conj()).real / D)
+        return relu(torch.einsum("ir,ic->rc", x, y.conj()).real / D)
 
 class RandomFeatureMap(torch.nn.Module):
     def __init__(self, in_dim, out_dim, alpha=1):
@@ -53,11 +54,7 @@ class POCML(torch.nn.Module):
                  state_dim,
                  random_feature_dim,
                  alpha=1,
-                 beta_obs=1,
-                 beta_state=1,
                  memory_bypass=False,
-                 decay=0.9,
-                 mem_reweight_rate=1.0,
                  memory=None,
                  obs=None
     ):
@@ -98,14 +95,17 @@ class POCML(torch.nn.Module):
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
     # eps > 0 to ensure we don't divide by zero when retrieving state/obs from memory
-    def init_memory(self, memory=None, eps=1e-4):
+    def init_memory(self, memory=None, eps=1e-4, bias=True):
         if not self.memory_bypass:
             if memory is None:
                 self.M = torch.nn.Parameter(torch.randn(self.n_states, self.n_obs).abs() * eps + torch.eye(self.n_states), requires_grad=False)
             else:
                 self.M = torch.nn.Parameter(memory, requires_grad=False)
         else:
-            self.M = torch.nn.Parameter(torch.eye(self.n_states), requires_grad=False)
+            if bias:
+                self.M = torch.nn.Parameter(torch.eye(self.n_states), requires_grad=False)
+            else:
+                self.M = torch.nn.Parameter(torch.ones(self.n_states, self.n_states) * eps, requires_grad=False)
         self.state_counts = self.M.sum(dim=1)
         self.obs_counts = self.M.sum(dim=0)
 
@@ -128,9 +128,9 @@ class POCML(torch.nn.Module):
             return torch.einsum("ij,...j,j->...i", self.M.T, u, 1 / self.state_counts)
 
     # returns \hat{u}_t given \phi(\hat{s}_t')
-    def get_expected_state(self, state, eps=1e-4, in_place=True):
+    def get_expected_state(self, state, in_place=True):
         phi_Q = self.get_state_kernel()
-        sims = sim(phi_Q, state) + eps # prevent div by 0
+        sims = sim(phi_Q, state)
         u = sims / sims.sum()
         if in_place:
             self.u = u

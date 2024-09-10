@@ -129,6 +129,8 @@ class POCMLTrainer(CMLTrainer):
         sims_pairwise = sim(phi_Q, phi_Q * phi_v)
         sims_s_hat = sim(phi_Q, phi_s)
         p = model.get_obs_from_memory(torch.eye(model.n_states)) @ oh_o_next
+        self.p = p
+        self.sims_s_hat = sims_s_hat
 
         r1 = torch.einsum("i,ij->ij", p, sims_pairwise) / (p @ sims_s_hat)
         r2 = sims_pairwise / sims_s_hat.sum()
@@ -182,26 +184,26 @@ class POCMLTrainer(CMLTrainer):
                 if tt % self.reset_every == 0:
                     #model.init_memory(model.M.detach() / 10)
                     model.init_memory()
-                else:
-                    # train model
-                    model.init_state(obs = oh_o_first, fixed_start=False) #  treat the first observation as the spacial case. 
-                    model.update_memory(model.u, oh_o_first)        #  memorize the first observation
+                
+                # train model
+                model.init_state(obs = oh_o_first, fixed_start=False) #  treat the first observation as the spacial case. 
+                model.update_memory(model.u, oh_o_first)        #  memorize the first observation
 
-                    phi_Q = model.get_state_kernel()
-                    if self.debug:
-                        print("Current Trajectory", trajectory[0])
-                        print("Action similarities\n", model.get_action_similarities())
-                        print("State kernel similarities (want close to identitiy)\n", sim(phi_Q, phi_Q))
-
-                    # o_pre  is the observation at time t
-                    for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
-                        loss = self.__one_time_step(model, o_pre, a, o_next, normalize=normalize)
-                        loss_record.append(loss.cpu().item())
-                        
-                        self.step_ct += 1
-                        if self.log:
-                            wandb.log({"train/loss": loss,
-                                       "train/step_ct": self.step_ct,})
+                phi_Q = model.get_state_kernel()
+                if self.debug:
+                    print("Current Trajectory", trajectory[0])
+                    print("Action similarities\n", model.get_action_similarities())
+                    print("State kernel similarities (want close to identitiy)\n", sim(phi_Q, phi_Q))
+                
+                # o_pre  is the observation at time t
+                for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
+                    loss = self.__one_time_step(model, o_pre, a, o_next, normalize=normalize)
+                    loss_record.append(loss.cpu().item())
+                    
+                    self.step_ct += 1
+                    if self.log:
+                        wandb.log({"train/loss": loss,
+                                    "train/step_ct": self.step_ct,})
 
                 self.traj_ct += 1
                 if self.log:
@@ -248,6 +250,9 @@ class POCMLTrainer(CMLTrainer):
             if self.update_state_given_obs:
                 print("Expected next state given obs", model.u)
             print("Predicted obs from action", oh_o_next_pred)
+            print("gamma", self.gamma)
+            print("p", self.p)
+            print("sims_s_hat", self.sims_s_hat)
 
         return loss
     
