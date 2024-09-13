@@ -262,10 +262,10 @@ def edges_from_adjacency(adj_matrix, action_type='unique', args=None):
             for j in range(n):
                 if adj_matrix[i, j] == 1:
                     edges.append((i, j))
-                    if j - i == 1: action_indices[(i, j)] = 0
-                    if j - i == -1: action_indices[(i, j)] = 1
-                    if j - i == 3: action_indices[(i, j)] = 2
-                    if j - i == -3: action_indices[(i, j)] = 3
+                    if j - i == 1: action_indices[(i, j)] = 2
+                    if j - i == -1: action_indices[(i, j)] = 3
+                    if j - i == 3: action_indices[(i, j)] = 1
+                    if j - i == -3: action_indices[(i, j)] = 0
         # L = args["tunnel_length"]
         # M = args["middle_tunnel_length"]
 
@@ -330,6 +330,19 @@ def edges_from_adjacency(adj_matrix, action_type='unique', args=None):
         # action_indices[(low_end, low_tun_end)] = 0 # right
         # edges.append((low_tun_end, low_end))
         # action_indices[(low_tun_end, low_end)] = 1 # left
+    elif action_type == "tree":
+        for i in range(n):
+            if 2*i+1 < n:
+                j1 = 2*i+1
+                j2 = 2*i+2
+                edges.append((i, j1))
+                action_indices[(i, j1)] = 1 # left
+                edges.append((i, j2))
+                action_indices[(i, j2)] = 2 # right
+                edges.append((j1, i))
+                action_indices[(j1, i)] = 0 # up
+                edges.append((j2, i))
+                action_indices[(j2, i)] = 0 # up
 
     return edges, action_indices
 
@@ -372,12 +385,15 @@ class GraphEnv():
             n_nodes = args["n_nodes"]
             self.n_actions = k = args["k"]
             self.adj_matrix = construct_regular_graph(n_nodes, k)
+        elif env == "tree":
+            levels = args["levels"]
+            self.adj_matrix = construct_tree(levels)
         
         self.env = env
         self.args = args
 
         self.action_type = "unique"
-        if self.env in ["regular", "two tunnel", "grid"]:
+        if self.env in ["regular", "two tunnel", "grid", "tree"]:
             self.action_type = self.env
 
         self.adj_matrix = torch.tensor(self.adj_matrix)
@@ -419,7 +435,7 @@ class GraphEnv():
             num_desired_trajectories = self.num_desired_trajectories
 
         action_type = "unique"
-        if self.env in ["regular", "two tunnel", "grid"]:
+        if self.env in ["regular", "two tunnel", "grid", "tree"]:
             action_type = self.env
             
         # TODO: fixed start

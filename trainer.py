@@ -152,6 +152,9 @@ class POCMLTrainer(CMLTrainer):
             last_loss = self.train_epoch() # Concatenate the list of losses
             loss_record += last_loss # Concatenate the list of losses
             mean_loss = np.mean(last_loss)
+            if mean_loss is np.nan:
+                print("mean loss is nan")
+                break
             if mean_loss < best_loss:
                 best_loss, best_model = mean_loss, deepcopy(self.model)
 
