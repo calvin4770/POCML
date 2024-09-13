@@ -130,6 +130,16 @@ def construct_grid_graph(rows=5, cols=5):
                 connections[idx, right_idx] = 1
     return connections
 
+def construct_tree(levels=5):
+    n_nodes = 2**levels - 1
+    connections = np.zeros((n_nodes, n_nodes)).astype(np.float32)
+    for i in range(n_nodes // 2 + 1):
+        if 2*i+1 < n_nodes:
+            connections[i, 2*i+1] = 1
+            connections[i, 2*i+2] = 1
+    connections += connections.T
+    return connections
+
 # constructs a k-regular graph (w.r.t. outgoing edges)
 def construct_regular_graph(n_nodes, k, self_connections=False, replace=False):
     connections = np.zeros((n_nodes, n_nodes)).astype(np.float32)
@@ -151,16 +161,18 @@ class RandomWalkDataset(Dataset):
                  num_trajectories,
                  items,
                  action_type="unique",
-                 start_state_idx=None,
-                 args=None):
+                 args=None,
+                 permissible_starts=None):
         self.adj_matrix = adj_matrix
         self.num_trajectories = num_trajectories
         self.trajectory_length = trajectory_length
+        self.permissible_starts = permissible_starts
         self.edges, self.action_indices = edges_from_adjacency(adj_matrix, action_type=action_type, args=args)
-        if start_state_idx is None:
+        if permissible_starts is None:
             start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
         else:
-            start_nodes = [start_state_idx] * num_trajectories # same start node for all
+            start_nodes = np.random.choice(permissible_starts, self.num_trajectories).tolist()
+        self.start_nodes = start_nodes
         self.data = []
         for node in start_nodes:
             trajectory = strict_random_walk(self.adj_matrix, node, self.trajectory_length, self.action_indices, items)
@@ -246,70 +258,78 @@ def edges_from_adjacency(adj_matrix, action_type='unique', args=None):
                     action_indices[(idx, right_idx)] = 3
 
     elif action_type == 'two tunnel':
-        L = args["tunnel_length"]
-        M = args["middle_tunnel_length"]
+        for i in range(n):
+            for j in range(n):
+                if adj_matrix[i, j] == 1:
+                    edges.append((i, j))
+                    if j - i == 1: action_indices[(i, j)] = 0
+                    if j - i == -1: action_indices[(i, j)] = 1
+                    if j - i == 3: action_indices[(i, j)] = 2
+                    if j - i == -3: action_indices[(i, j)] = 3
+        # L = args["tunnel_length"]
+        # M = args["middle_tunnel_length"]
 
-        # first L -> upper tunnel, next L -> lower tunnel, next M -> middle tunnel
-        # then upper corner, lower corner, upper end, lower end
+        # # first L -> upper tunnel, next L -> lower tunnel, next M -> middle tunnel
+        # # then upper corner, lower corner, upper end, lower end
 
-        up_tun_head = 0
-        up_tun_end = L - 1
-        low_tun_head = L
-        low_tun_end = L * 2 - 1
-        mid_tun_head = L * 2
-        mid_tun_end = L * 2 + M - 1
-        up_corner = L * 2 + M
-        low_corner = L * 2 + M + 1
-        up_end = L * 2 + M + 2
-        low_end = L * 2 + M + 3
+        # up_tun_head = 0
+        # up_tun_end = L - 1
+        # low_tun_head = L
+        # low_tun_end = L * 2 - 1
+        # mid_tun_head = L * 2
+        # mid_tun_end = L * 2 + M - 1
+        # up_corner = L * 2 + M
+        # low_corner = L * 2 + M + 1
+        # up_end = L * 2 + M + 2
+        # low_end = L * 2 + M + 3
 
-        # construct upper and lower tunnels
-        for i in range(L-1):
-            edges.append((up_tun_head + i, up_tun_head + i + 1))
-            action_indices[(up_tun_head + i, up_tun_head + i + 1)] = 0 # right
-            edges.append((up_tun_head + i + 1, up_tun_head + i))
-            action_indices[(up_tun_head + i + 1, up_tun_head + i)] = 1 # left
-            edges.append((low_tun_head + i, low_tun_head + i + 1))
-            action_indices[(low_tun_head + i, low_tun_head + i + 1)] = 0 # right
-            edges.append((low_tun_head + i + 1, low_tun_head + i))
-            action_indices[(low_tun_head + i + 1, low_tun_head + i)] = 1 # left
+        # # construct upper and lower tunnels
+        # for i in range(L-1):
+        #     edges.append((up_tun_head + i, up_tun_head + i + 1))
+        #     action_indices[(up_tun_head + i, up_tun_head + i + 1)] = 0 # right
+        #     edges.append((up_tun_head + i + 1, up_tun_head + i))
+        #     action_indices[(up_tun_head + i + 1, up_tun_head + i)] = 1 # left
+        #     edges.append((low_tun_head + i, low_tun_head + i + 1))
+        #     action_indices[(low_tun_head + i, low_tun_head + i + 1)] = 0 # right
+        #     edges.append((low_tun_head + i + 1, low_tun_head + i))
+        #     action_indices[(low_tun_head + i + 1, low_tun_head + i)] = 1 # left
 
-        # construct middle tunnel
-        for i in range(M-1):
-            edges.append((mid_tun_head + i, mid_tun_head + i + 1))
-            action_indices[(mid_tun_head + i, mid_tun_head + i + 1)] = 2 # down
-            edges.append((mid_tun_head + i + 1, mid_tun_head + i))
-            action_indices[(mid_tun_head + i + 1, mid_tun_head + i)] = 3 # up
+        # # construct middle tunnel
+        # for i in range(M-1):
+        #     edges.append((mid_tun_head + i, mid_tun_head + i + 1))
+        #     action_indices[(mid_tun_head + i, mid_tun_head + i + 1)] = 2 # down
+        #     edges.append((mid_tun_head + i + 1, mid_tun_head + i))
+        #     action_indices[(mid_tun_head + i + 1, mid_tun_head + i)] = 3 # up
 
-        # connect upper corner
-        edges.append((up_corner, up_tun_head))
-        action_indices[(up_corner, up_tun_head)] = 0 # right
-        edges.append((up_tun_head, up_corner))
-        action_indices[(up_tun_head, up_corner)] = 1 # left
-        edges.append((up_corner, mid_tun_head))
-        action_indices[(up_corner, mid_tun_head)] = 2 # down
-        edges.append((mid_tun_head, up_corner))
-        action_indices[(mid_tun_head, up_corner)] = 3 # up
+        # # connect upper corner
+        # edges.append((up_corner, up_tun_head))
+        # action_indices[(up_corner, up_tun_head)] = 0 # right
+        # edges.append((up_tun_head, up_corner))
+        # action_indices[(up_tun_head, up_corner)] = 1 # left
+        # edges.append((up_corner, mid_tun_head))
+        # action_indices[(up_corner, mid_tun_head)] = 2 # down
+        # edges.append((mid_tun_head, up_corner))
+        # action_indices[(mid_tun_head, up_corner)] = 3 # up
 
-        # connect lower corner
-        edges.append((low_corner, low_tun_head))
-        action_indices[(low_corner, low_tun_head)] = 0 # right
-        edges.append((low_tun_head, low_corner))
-        action_indices[(low_tun_head, low_corner)] = 1 # left
-        edges.append((low_corner, mid_tun_end))
-        action_indices[(low_corner, mid_tun_end)] = 3 # up
-        edges.append((mid_tun_end, low_corner))
-        action_indices[(mid_tun_end, low_corner)] = 2 # down
+        # # connect lower corner
+        # edges.append((low_corner, low_tun_head))
+        # action_indices[(low_corner, low_tun_head)] = 0 # right
+        # edges.append((low_tun_head, low_corner))
+        # action_indices[(low_tun_head, low_corner)] = 1 # left
+        # edges.append((low_corner, mid_tun_end))
+        # action_indices[(low_corner, mid_tun_end)] = 3 # up
+        # edges.append((mid_tun_end, low_corner))
+        # action_indices[(mid_tun_end, low_corner)] = 2 # down
 
-        # connect ends
-        edges.append((up_end, up_tun_end))
-        action_indices[(up_end, up_tun_end)] = 0 # right
-        edges.append((up_tun_end, up_end))
-        action_indices[(up_tun_end, up_end)] = 1 # left
-        edges.append((low_end, low_tun_end))
-        action_indices[(low_end, low_tun_end)] = 0 # right
-        edges.append((low_tun_end, low_end))
-        action_indices[(low_tun_end, low_end)] = 1 # left
+        # # connect ends
+        # edges.append((up_end, up_tun_end))
+        # action_indices[(up_end, up_tun_end)] = 0 # right
+        # edges.append((up_tun_end, up_end))
+        # action_indices[(up_tun_end, up_end)] = 1 # left
+        # edges.append((low_end, low_tun_end))
+        # action_indices[(low_end, low_tun_end)] = 0 # right
+        # edges.append((low_tun_end, low_end))
+        # action_indices[(low_tun_end, low_end)] = 1 # left
 
     return edges, action_indices
 
@@ -337,10 +357,16 @@ class GraphEnv():
             self.adj_matrix = construct_grid_graph(rows, cols)
             self.n_actions = 4
         elif env == 'two tunnel':
-            tunnel_length = args["tunnel_length"]
-            middle_tunnel_length = args["middle_tunnel_length"]
-            self.adj_matrix = construct_two_tunnel_graph(
-                tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
+            # tunnel_length = args["tunnel_length"]
+            # middle_tunnel_length = args["middle_tunnel_length"]
+            # self.adj_matrix = construct_two_tunnel_graph(
+            #     tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
+            self.adj_matrix = construct_grid_graph(3, 3)
+            # nodes 4 and 7 are blocked
+            self.adj_matrix[4, :] = 0
+            self.adj_matrix[:, 4] = 0
+            self.adj_matrix[7, :] = 0
+            self.adj_matrix[:, 7] = 0
             self.n_actions = 4
         elif env == 'regular':
             n_nodes = args["n_nodes"]
@@ -376,13 +402,17 @@ class GraphEnv():
         self.populate_graph()
 
     # uniformly random observations or identity (unique)
-    def populate_graph(self):
-        if self.unique:
-            self.items = torch.arange(0, self.n_items)
+    # obs_state_map = array of size [n_states] storing obs indices
+    def populate_graph(self, obs_state_map=None):
+        if obs_state_map is None:
+            if self.unique:
+                self.items = torch.arange(0, self.n_items)
+            else:
+                self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
         else:
-            self.items = (torch.rand(self.size) * self.n_items).to(torch.int32)
+            self.items = obs_state_map
 
-    def gen_dataset(self, batch_size=None, num_desired_trajectories=None, fixed_start=False):
+    def gen_dataset(self, batch_size=None, num_desired_trajectories=None):
         if batch_size is None:
             batch_size = self.batch_size
         if num_desired_trajectories is None:
@@ -393,15 +423,14 @@ class GraphEnv():
             action_type = self.env
             
         # TODO: fixed start
-        start_state_idx = self.start_state_idx if fixed_start else None
         self.dataset = RandomWalkDataset(
             self.adj_matrix,
             batch_size,
             num_desired_trajectories,
             self.items,
             action_type=action_type,
-            start_state_idx=start_state_idx,
-            args=self.args
+            args=self.args,
+            permissible_starts=([0, 1, 2, 3, 5, 6, 8] if self.env == 'two tunnel' else None)
         )
         if self.env not in ["regular", "two tunnel", "grid"]:
             self.n_actions = len(self.dataset.action_indices)
@@ -409,14 +438,15 @@ class GraphEnv():
 
     def populate_graph_preset(self):
         if self.env == 'two tunnel':
-            L = self.tunnel_length
-            M = self.middle_tunnel_length
-            self.items = torch.zeros(self.size)
-            self.items[L*2:L*2+M] = 1
-            self.items[L*2+M] = 2
-            self.items[L*2+M+1] = 3
-            self.items[L*2+M+2] = 4
-            self.items[L*2+M+3] = 5
+            # L = self.tunnel_length
+            # M = self.middle_tunnel_length
+            # self.items = torch.zeros(self.size)
+            # self.items[L*2:L*2+M] = 1
+            # self.items[L*2+M] = 2
+            # self.items[L*2+M+1] = 3
+            # self.items[L*2+M+2] = 4
+            # self.items[L*2+M+3] = 5
+            self.items = torch.tensor([0, 1, 2, 3, 4, 3, 5, 4, 6])
         
 def node_outgoing_actions(adj_matrix, action_type="unique", args=None):
     # This function creates several look-up tables for later computation's convecience

@@ -8,7 +8,7 @@ import numpy as np
 # x: [out_dim, B]; y: [out_dim] OR
 # x: [out_dim]; y: [out_dim, B] OR
 # x: [out_dim, B1]; y: [out_dim, B2]
-def sim(x, y, eps=1e-4):
+def sim(x, y, eps=1e-6):
     relu = lambda x: torch.maximum(x, torch.ones_like(x) * eps)
     D = x.shape[0]
     if len(x.shape) == 1 and len(y.shape) == 1:
@@ -82,10 +82,10 @@ class POCML(torch.nn.Module):
         self.t += 1
 
     # Initialize state, with the option to pass in the first observation.
-    def init_state(self, obs=None, fixed_start=False):
-        if fixed_start:
+    def init_state(self, obs=None, state_idx=None):
+        if state_idx is not None:
             self.u = torch.zeros(self.n_states)
-            self.u[0] = 1
+            self.u[state_idx] = 1
         else:
             if obs is None:
                 self.u = torch.ones(self.n_states) / self.n_states
@@ -261,3 +261,19 @@ class POCML(torch.nn.Module):
         phi_Q = self.random_feature_map(self.Q)
         return phi_Q.detach()
 
+    def traverse(self, traj, update_state_given_obs=False):
+        oh_o_first = F.one_hot(traj[0,0], num_classes=self.n_obs).to(torch.float32)
+        self.update_memory(self.u, oh_o_first)
+
+        for o_pre, a, o_next in traj:
+            oh_o_next = F.one_hot(o_next, num_classes=self.n_obs).to(torch.float32)  # one-hot encoding of the first observation
+            oh_a = F.one_hot(a, num_classes=self.n_actions).to(torch.float32)     # one-hot encoding of the first observation
+            
+            hd_s_pred_bind_precleanup = self.update_state(oh_a) # update state by binding action
+            oh_u_next = self.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
+
+            # Clean up state \phi(\hat{s}_{t+1})
+            if update_state_given_obs:
+                self.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
+            self.clean_up()
+            self.update_memory(oh_u_next, oh_o_next)

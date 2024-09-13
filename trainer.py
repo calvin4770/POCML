@@ -114,7 +114,8 @@ class POCMLTrainer(CMLTrainer):
     # # Create tensor reused in the update rule (30 - 33)
     # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
     def __prep_update(self, oh_o_next, oh_a):
-        
+        alpha = self.model.random_feature_map.alpha
+
         model: POCML = self.model
         Q = model.Q
 
@@ -128,6 +129,9 @@ class POCMLTrainer(CMLTrainer):
 
         sims_pairwise = sim(phi_Q, phi_Q * phi_v)
         sims_s_hat = sim(phi_Q, phi_s)
+        # diff_s_squared = torch.einsum("ijk,ijk->ij", self.diff_s, self.diff_s)
+        # sims_pairwise = torch.exp(-alpha * diff_s_squared)
+        # sims_s_hat = sims_pairwise @ model.u
         p = model.get_obs_from_memory(torch.eye(model.n_states)) @ oh_o_next
         self.p = p
         self.sims_s_hat = sims_s_hat
@@ -186,7 +190,7 @@ class POCMLTrainer(CMLTrainer):
                     model.init_memory()
                 
                 # train model
-                model.init_state(obs = oh_o_first, fixed_start=False) #  treat the first observation as the spacial case. 
+                model.init_state(obs = oh_o_first) #  treat the first observation as the spacial case. 
                 model.update_memory(model.u, oh_o_first)        #  memorize the first observation
 
                 phi_Q = model.get_state_kernel()

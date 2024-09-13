@@ -1,6 +1,9 @@
 import torch
 import torch.nn.functional as F
 
+from dataloader import GraphEnv, DataLoader
+from model import POCML
+
 def accuracy(model, dataloader):
     total, correct = 0, 0
     confidences = []
@@ -68,3 +71,23 @@ def state_transition_consistency(model, env):
                 state_dist_total = torch.linalg.norm(state_tgt - state_src).item()
                 distance_ratios.append(state_pred_dist / state_dist_total)
     return correct / total, confidences, distance_ratios
+
+def test_two_tunnel(model: POCML):
+    trajectory_length, num_desired_trajectories = 10, 1
+    env = GraphEnv(
+        env='two tunnel', 
+        batch_size=trajectory_length, 
+        num_desired_trajectories=num_desired_trajectories
+    )
+
+    train_dataset = env.gen_dataset()
+    train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
+    start_idx = env.dataset.start_nodes[0]
+    traj = train_dataloader[0]
+
+    model.init_time()
+    model.init_memory(bias=False)
+    model.init_state(start_idx=start_idx)
+    model.traverse(traj)
+
+    model.init_state
