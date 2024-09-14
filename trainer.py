@@ -275,3 +275,36 @@ class POCMLTrainer(CMLTrainer):
         dV = eta * torch.einsum("ij,j,ijk,l->kl", self.gamma, oh_u_pre, self.diff_s, oh_a)
         self.model.V += dV
         return dV
+    
+class BenchmarkTrainer:
+    def __init__(self,
+                 model,
+                 train_loader,
+                 optimizer=None,
+                 criterion=None,
+                 val_loader=None,
+                 device=None,
+                 ):
+
+        #super.__init__(model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None)
+        self.model = model
+        self.train_loader = train_loader
+        self.optimizer = optimizer
+        self.criterion = criterion
+        self.val_loader = val_loader
+        self.device = device
+
+    def train(self, epochs:int = 10) -> list:
+
+        best_model = None
+        best_loss = 1e10
+        loss_record = []
+
+        for epoch in tqdm(range(epochs), desc="Epochs"):
+            last_loss = self.train_epoch() # Concatenate the list of losses
+            loss_record += last_loss # Concatenate the list of losses
+            mean_loss = np.mean(last_loss)
+            if mean_loss < best_loss:
+                best_loss, best_model = mean_loss, deepcopy(self.model)
+        
+        return np.array(loss_record).reshape(epochs,-1), best_model

@@ -388,6 +388,7 @@ class GraphEnv():
         elif env == "tree":
             levels = args["levels"]
             self.adj_matrix = construct_tree(levels)
+            self.n_actions = 3
         
         self.env = env
         self.args = args
@@ -448,7 +449,7 @@ class GraphEnv():
             args=self.args,
             permissible_starts=([0, 1, 2, 3, 5, 6, 8] if self.env == 'two tunnel' else None)
         )
-        if self.env not in ["regular", "two tunnel", "grid"]:
+        if self.env not in ["regular", "two tunnel", "grid", "tree"]:
             self.n_actions = len(self.dataset.action_indices)
         return self.dataset.data
 
