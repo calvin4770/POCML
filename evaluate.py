@@ -12,11 +12,12 @@ def accuracy(model, dataloader):
         model.init_time()
 
         oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
-                
+
+        # model.init_state(state_idx=trajectory[0,0,4])       
         model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
         #model.update_memory(model.state, oh_o_first)        #  memorize the first observation
         
-        for o_pre, a, o_next in trajectory[0]:
+        for o_pre, a, o_next, _, _ in trajectory[0]:
 
             oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
             oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation

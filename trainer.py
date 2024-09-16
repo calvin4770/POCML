@@ -152,7 +152,7 @@ class POCMLTrainer(CMLTrainer):
             last_loss = self.train_epoch() # Concatenate the list of losses
             loss_record += last_loss # Concatenate the list of losses
             mean_loss = np.mean(last_loss)
-            if mean_loss is np.nan:
+            if mean_loss == np.nan:
                 print("mean loss is nan")
                 break
             if mean_loss < best_loss:
@@ -193,7 +193,8 @@ class POCMLTrainer(CMLTrainer):
                     model.init_memory()
                 
                 # train model
-                model.init_state(obs = oh_o_first) #  treat the first observation as the spacial case. 
+                #model.init_state(obs = oh_o_first) #  treat the first observation as the special case. 
+                model.init_state(state_idx=trajectory[0,0,4])
                 model.update_memory(model.u, oh_o_first)        #  memorize the first observation
 
                 phi_Q = model.get_state_kernel()
@@ -203,7 +204,7 @@ class POCMLTrainer(CMLTrainer):
                     print("State kernel similarities (want close to identitiy)\n", sim(phi_Q, phi_Q))
                 
                 # o_pre  is the observation at time t
-                for ttt, (o_pre, a, o_next) in enumerate(trajectory[0].to(device)):
+                for ttt, (o_pre, a, o_next, _, _) in enumerate(trajectory[0].to(device)):
                     loss = self.__one_time_step(model, o_pre, a, o_next, normalize=normalize)
                     loss_record.append(loss.cpu().item())
                     

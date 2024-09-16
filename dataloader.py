@@ -176,7 +176,7 @@ class RandomWalkDataset(Dataset):
         self.data = []
         for node in start_nodes:
             trajectory = strict_random_walk(self.adj_matrix, node, self.trajectory_length, self.action_indices, items)
-            self.data.append(torch.tensor([(x[0], x[1], x[2]) for x in trajectory]))
+            self.data.append(torch.tensor([tuple(x) for x in trajectory]))
     def __len__(self):
         return self.num_trajectories  # Number of trajectories
 
@@ -193,7 +193,7 @@ def strict_random_walk(adj_matrix, start_node, length, action_indices, items):
         if not neighbors:
             break
         next_node = neighbors[torch.randint(0, len(neighbors), (1,)).item()]
-        trajectory.append((items[current_node], action_indices[(current_node, next_node)], items[next_node]))
+        trajectory.append((items[current_node], action_indices[(current_node, next_node)], items[next_node], current_node, next_node))
         current_node = next_node
     return trajectory
 
