@@ -299,7 +299,7 @@ class BenchmarkTrainer:
 
     def train(self, epochs:int = 10) -> list:
         loss_record = []
-
+        
         for epoch in tqdm(range(epochs), desc="Epochs"):
             last_loss = self.train_epoch() # Concatenate the list of losses
             loss_record += last_loss # Concatenate the list of losses
@@ -317,19 +317,21 @@ class BenchmarkTrainer:
                 torch.cat([
                     F.one_hot(x[i, 0], num_classes=model.n_obs),
                     F.one_hot(x[i, 1], num_classes=model.n_actions)
-                ]) for i in range(x.shape[0])
+                ]).to(torch.float32) for i in range(x.shape[0])
             ])
             new_y = torch.stack([
-                F.one_hot(y[i], num_classes=model.n_obs) for i in range(y.shape[0])
+                F.one_hot(y[i], num_classes=model.n_obs).to(torch.float32) for i in range(y.shape[0])
             ])
-            z = F.one_hot(init_state, num_classes=model.n_states)
+            z = F.one_hot(init_state, num_classes=model.n_states).to(torch.float32)
             dataset.append((new_x, new_y, z))
+        return dataset
 
     def train_epoch(self) -> list:
-        model: POCML = self.model
+        model = self.model
         loss_record = []     
         
         for x, y, init_state in self.dataset:
+            model.init_state()
             y_pred = model(x, init_state)
             loss = self.criterion(y_pred, y)
             self.optimizer.zero_grad()

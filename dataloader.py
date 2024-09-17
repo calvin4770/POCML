@@ -452,6 +452,31 @@ class GraphEnv():
         if self.env not in ["regular", "two tunnel", "grid", "tree"]:
             self.n_actions = len(self.dataset.action_indices)
         return self.dataset.data
+    
+    def gen_zero_shot_dataset(self, trajectory_length=None, num_environments=10):
+        if trajectory_length is None:
+            trajectory_length = self.batch_size
+
+        action_type = "unique"
+        if self.env in ["regular", "two tunnel", "grid", "tree"]:
+            action_type = self.env
+        if self.env not in ["regular", "two tunnel", "grid", "tree"]:
+            self.n_actions = len(self.dataset.action_indices)
+        
+        dataset = []
+        for _ in range(num_environments):
+            items = (torch.rand(self.size) * self.n_items).to(torch.int32)
+            d = RandomWalkDataset(
+                self.adj_matrix,
+                trajectory_length,
+                2,
+                items,
+                action_type=action_type,
+                args=self.args
+            )
+            dataset.append((d.data[0], d.data[1]))
+
+        return dataset
 
     def populate_graph_preset(self):
         if self.env == 'two tunnel':
