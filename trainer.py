@@ -295,17 +295,47 @@ class BenchmarkTrainer:
         self.val_loader = val_loader
         self.device = device
 
-    def train(self, epochs:int = 10) -> list:
+        self.dataset = self.__preprocess_dataset(self.train_loader)
 
-        best_model = None
-        best_loss = 1e10
+    def train(self, epochs:int = 10) -> list:
         loss_record = []
 
         for epoch in tqdm(range(epochs), desc="Epochs"):
             last_loss = self.train_epoch() # Concatenate the list of losses
             loss_record += last_loss # Concatenate the list of losses
-            mean_loss = np.mean(last_loss)
-            if mean_loss < best_loss:
-                best_loss, best_model = mean_loss, deepcopy(self.model)
         
-        return np.array(loss_record).reshape(epochs,-1), best_model
+        return np.array(loss_record).reshape(epochs,-1), self.model
+    
+    def __preprocess_dataset(self, dataloader):
+        model: POCML = self.model
+        dataset = []
+        for traj in dataloader:
+            x = traj[0][:, :2]
+            y = traj[0][:, 3]
+            init_state = traj[0][0, 4]
+            new_x = torch.stack([
+                torch.cat([
+                    F.one_hot(x[i, 0], num_classes=model.n_obs),
+                    F.one_hot(x[i, 1], num_classes=model.n_actions)
+                ]) for i in range(x.shape[0])
+            ])
+            new_y = torch.stack([
+                F.one_hot(y[i], num_classes=model.n_obs) for i in range(y.shape[0])
+            ])
+            z = F.one_hot(init_state, num_classes=model.n_states)
+            dataset.append((new_x, new_y, z))
+
+    def train_epoch(self) -> list:
+        model: POCML = self.model
+        loss_record = []     
+        
+        for x, y, init_state in self.dataset:
+            y_pred = model(x, init_state)
+            loss = self.criterion(y_pred, y)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            loss_record.append(loss.item())
+
+        return loss_record

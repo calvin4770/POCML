@@ -277,3 +277,24 @@ class POCML(torch.nn.Module):
                 self.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
             self.clean_up()
             self.update_memory(oh_u_next, oh_o_next)
+
+class LSTM(torch.nn.Module):
+    def __init__(self, n_obs, n_actions, n_states, hidden_size):
+        super().__init__()
+        in_dim = n_obs + n_actions
+        out_dim = n_obs
+        self.hidden_size = hidden_size
+        self.lstm = torch.nn.LSTM(in_dim, hidden_size, 1, batch_first=True)
+        self.fc = torch.nn.Linear(hidden_size, out_dim)
+        self.fc_init1 = torch.nn.Linear(n_states, hidden_size) # h_0
+        self.fc_init2 = torch.nn.Linear(n_states, hidden_size) # c_0
+
+    def get_init_state(self, state):
+        return self.fc_init1(state), self.fc_init2(state)
+
+    def forward(self, x, init_state):
+        # x has shape [L, in_dim]
+        h, c = self.get_init_state(init_state)
+        out, _ = self.lstm(x, (h.unsqueeze(0), c.unsqueeze(0))) # [L, hidden_size]
+        y = self.fc(out)  # [L, out_dim]
+        return y
