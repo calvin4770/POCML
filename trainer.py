@@ -283,7 +283,7 @@ class BenchmarkTrainer:
                  train_loader,
                  optimizer=None,
                  criterion=None,
-                 val_loader=None,
+                 test_loader=None,
                  device=None,
                  ):
 
@@ -292,10 +292,11 @@ class BenchmarkTrainer:
         self.train_loader = train_loader
         self.optimizer = optimizer
         self.criterion = criterion
-        self.val_loader = val_loader
+        self.test_loader = test_loader
         self.device = device
 
-        self.dataset = self.__preprocess_dataset(self.train_loader)
+        self.train_dataset = self.preprocess_dataset(self.train_loader)
+        self.test_dataset = self.preprocess_dataset(self.test_loader)
 
     def train(self, epochs:int = 10) -> list:
         loss_record = []
@@ -306,7 +307,7 @@ class BenchmarkTrainer:
         
         return np.array(loss_record).reshape(epochs,-1), self.model
     
-    def __preprocess_dataset(self, dataloader):
+    def preprocess_dataset(self, dataloader):
         model: POCML = self.model
         dataset = []
         for traj in dataloader:
@@ -330,7 +331,7 @@ class BenchmarkTrainer:
         model = self.model
         loss_record = []     
         
-        for x, y, init_state in self.dataset:
+        for x, y, init_state in self.train_dataset:
             model.init_state()
             y_pred = model(x, init_state)
             loss = self.criterion(y_pred, y)

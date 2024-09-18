@@ -41,6 +41,20 @@ def accuracy(model, dataloader):
             total += 1
     return correct / total, confidences
 
+def benchmark_accuracy(model, dataset):
+    total, correct = 0, 0
+    confidences = []
+
+    with torch.no_grad():
+        for x, y, init_state in dataset:
+            model.init_state()
+            y_pred = model(x, init_state)
+            correct += (y.argmax(dim=1) == y_pred.argmax(dim=1)).sum()
+            total += y.shape[0]
+            confidences.append(torch.einsum("ij,ij->i", y, F.sigmoid(y_pred)))
+        
+    return (correct / total).item(), torch.cat(confidences).tolist()
+
 def state_transition_consistency(model, env):
     node_to_action_matrix = env.node_to_action_matrix
     n_nodes = node_to_action_matrix.shape[0]
