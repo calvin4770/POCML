@@ -95,10 +95,13 @@ class POCML(torch.nn.Module):
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
     # eps > 0 to ensure we don't divide by zero when retrieving state/obs from memory
-    def init_memory(self, memory=None, eps=1e-4, bias=True):
+    def init_memory(self, memory=None, eps=1e-5, bias=True):
         if not self.memory_bypass:
             if memory is None:
-                self.M = torch.nn.Parameter(torch.randn(self.n_states, self.n_obs).abs() * eps + torch.eye(self.n_states), requires_grad=False)
+                if bias:
+                    self.M = torch.nn.Parameter(torch.randn(self.n_states, self.n_obs).abs() * eps + torch.eye(self.n_states), requires_grad=False)
+                else:
+                    self.M = torch.nn.Parameter(torch.ones(self.n_states, self.n_obs) * eps, requires_grad=False)
             else:
                 self.M = torch.nn.Parameter(memory, requires_grad=False)
         else:
@@ -261,22 +264,30 @@ class POCML(torch.nn.Module):
         phi_Q = self.random_feature_map(self.Q)
         return phi_Q.detach()
 
-    def traverse(self, traj, update_state_given_obs=False):
+    def traverse(self, traj, update_state_given_obs=False, update_memory=True, softmax=False, beta=1000):
         oh_o_first = F.one_hot(traj[0,0], num_classes=self.n_obs).to(torch.float32)
-        self.update_memory(self.u, oh_o_first)
+        if update_memory:
+            self.update_memory(self.u, oh_o_first)
 
-        for o_pre, a, o_next in traj:
+        predictions = []
+        for _, a, o_next, _, _ in traj:
             oh_o_next = F.one_hot(o_next, num_classes=self.n_obs).to(torch.float32)  # one-hot encoding of the first observation
             oh_a = F.one_hot(a, num_classes=self.n_actions).to(torch.float32)     # one-hot encoding of the first observation
             
             hd_s_pred_bind_precleanup = self.update_state(oh_a) # update state by binding action
             oh_u_next = self.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
+            if softmax:
+                oh_u_next = F.softmax(beta * oh_u_next, dim=0)
+            oh_o_next_pred = self.get_obs_from_memory(oh_u_next) # predict observation with updated state
+            predictions.append(oh_o_next_pred)
 
             # Clean up state \phi(\hat{s}_{t+1})
             if update_state_given_obs:
                 self.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
             self.clean_up()
-            self.update_memory(oh_u_next, oh_o_next)
+            if update_memory:
+                self.update_memory(oh_u_next, oh_o_next)
+        return torch.stack(predictions, dim=0)
 
 class LSTM(torch.nn.Module):
     def __init__(self, n_obs, n_actions, n_states, hidden_size):

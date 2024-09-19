@@ -87,6 +87,41 @@ def state_transition_consistency(model, env):
                 distance_ratios.append(state_pred_dist / state_dist_total)
     return correct / total, confidences, distance_ratios
 
+# dataset generated from gen_zero_shot_dataset in GraphEnv
+# of the form [(exploration trajectory, testing trajectory)]
+def zero_shot_accuracy(model, 
+                       dataset, 
+                       update_state_given_obs=True, 
+                       update_memory=False,
+                       softmax=False, 
+                       beta=1000):
+    total, correct = 0, 0
+    for traj1, traj2 in dataset:
+        #traj2 = traj1 # TODO
+        model.init_time()
+        model.init_memory(bias=False)
+        model.init_state(state_idx=traj1[0, 3])
+        model.traverse(traj1,
+                       update_state_given_obs=False,
+                       update_memory=True,
+                       softmax=softmax,
+                       beta=beta) # populate memory
+
+        model.init_time()
+        model.init_state(state_idx=traj2[0, 3])
+        y_pred = model.traverse(
+            traj2, 
+            update_state_given_obs=update_state_given_obs, 
+            update_memory=update_memory,
+            softmax=softmax,
+            beta=beta) # one-hot
+
+        y = traj2[:, 2] # not one-hot
+        correct += (y == y_pred.argmax(dim=1)).sum()
+        total += y.shape[0]
+    return correct / total
+
+
 def test_two_tunnel(model: POCML):
     trajectory_length, num_desired_trajectories = 10, 1
     env = GraphEnv(
@@ -97,12 +132,12 @@ def test_two_tunnel(model: POCML):
 
     train_dataset = env.gen_dataset()
     train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
-    start_idx = env.dataset.start_nodes[0]
+    state_idx = env.dataset.start_nodes[0]
     traj = train_dataloader[0]
 
     model.init_time()
     model.init_memory(bias=False)
-    model.init_state(start_idx=start_idx)
+    model.init_state(state_idx=state_idx)
     model.traverse(traj)
 
     model.init_state
