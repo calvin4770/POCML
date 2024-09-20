@@ -9,6 +9,7 @@ from copy import deepcopy
 import wandb
 
 from model import sim, POCML
+from dataloader import preprocess_dataset
 
 class CMLTrainer:
     def __init__(self, model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None, debug =False):
@@ -285,9 +286,9 @@ class BenchmarkTrainer:
                  criterion=None,
                  test_loader=None,
                  device=None,
+                 include_init_state_info=True
                  ):
 
-        #super.__init__(model, train_loader, norm=False, optimizer=None, criterion=None, val_loader=None, device=None)
         self.model = model
         self.train_loader = train_loader
         self.optimizer = optimizer
@@ -295,8 +296,8 @@ class BenchmarkTrainer:
         self.test_loader = test_loader
         self.device = device
 
-        self.train_dataset = self.preprocess_dataset(self.train_loader)
-        self.test_dataset = self.preprocess_dataset(self.test_loader)
+        self.train_dataset = preprocess_dataset(model, train_loader, include_init_state_info=include_init_state_info)
+        self.test_dataset = preprocess_dataset(model, test_loader, include_init_state_info=include_init_state_info)
 
     def train(self, epochs:int = 10) -> list:
         loss_record = []
@@ -306,34 +307,14 @@ class BenchmarkTrainer:
             loss_record += last_loss # Concatenate the list of losses
         
         return np.array(loss_record).reshape(epochs,-1), self.model
-    
-    def preprocess_dataset(self, dataloader):
-        model: POCML = self.model
-        dataset = []
-        for traj in dataloader:
-            x = traj[0][:, :2]
-            y = traj[0][:, 3]
-            init_state = traj[0][0, 4]
-            new_x = torch.stack([
-                torch.cat([
-                    F.one_hot(x[i, 0], num_classes=model.n_obs),
-                    F.one_hot(x[i, 1], num_classes=model.n_actions)
-                ]).to(torch.float32) for i in range(x.shape[0])
-            ])
-            new_y = torch.stack([
-                F.one_hot(y[i], num_classes=model.n_obs).to(torch.float32) for i in range(y.shape[0])
-            ])
-            z = F.one_hot(init_state, num_classes=model.n_states).to(torch.float32)
-            dataset.append((new_x, new_y, z))
-        return dataset
 
     def train_epoch(self) -> list:
         model = self.model
         loss_record = []     
         
-        for x, y, init_state in self.train_dataset:
-            model.init_state()
-            y_pred = model(x, init_state)
+        for x, y in self.train_dataset:
+            model.reset_state()
+            y_pred = model(x)
             loss = self.criterion(y_pred, y)
             self.optimizer.zero_grad()
             loss.backward()

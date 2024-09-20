@@ -507,3 +507,51 @@ def node_outgoing_actions(adj_matrix, action_type="unique", args=None):
         node_actions[node_from].append(action_indices[edge])
         node_to_action_matrix[node_from][node_to] = action_indices[edge]  
     return node_actions, node_to_action_matrix.long(), inverse_action_indices
+
+def convert_traj_for_benchmark(model, traj, include_init_state_info=True):
+    x = traj[:, :2]
+    y = traj[:, 3]
+    init_state = traj[0, 4]
+    if include_init_state_info:
+        new_x = torch.stack([
+            torch.cat([
+                F.one_hot(x[i, 0], num_classes=model.n_obs),
+                F.one_hot(x[i, 1], num_classes=model.n_actions),
+                torch.zeros(model.n_states)
+            ]).to(torch.float32) for i in range(x.shape[0])
+        ])
+    else:
+        new_x = torch.stack([
+            torch.cat([
+                F.one_hot(x[i, 0], num_classes=model.n_obs),
+                F.one_hot(x[i, 1], num_classes=model.n_actions)
+            ]).to(torch.float32) for i in range(x.shape[0])
+        ])
+    new_y = torch.stack([
+        F.one_hot(y[i], num_classes=model.n_obs).to(torch.float32) for i in range(y.shape[0])
+    ])
+    if include_init_state_info:
+        new_x = torch.cat([
+            torch.cat([
+                torch.zeros(model.n_obs + model.n_actions),
+                F.one_hot(init_state, num_classes=model.n_states)
+            ]).to(torch.float32).unsqueeze(0),
+            new_x], dim=0)
+    return new_x, new_y
+
+# for benchmark
+def preprocess_dataset(model, dataloader, include_init_state_info=True):
+    dataset = []
+    for traj in dataloader:
+        new_x, new_y = convert_traj_for_benchmark(model, traj[0], include_init_state_info=include_init_state_info)
+        dataset.append((new_x, new_y))
+    return dataset
+
+def preprocess_zero_shot_dataset(model, dataset, include_init_state_info=True):
+    new_dataset = []
+    for traj1, traj2 in dataset:
+        x1, _ = convert_traj_for_benchmark(model, traj1, include_init_state_info=include_init_state_info)
+        x2, _ = convert_traj_for_benchmark(model, traj2, include_init_state_info=include_init_state_info)
+        y = traj2[:, 2]
+        new_dataset.append((x1, x2, y))
+    return new_dataset

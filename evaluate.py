@@ -46,9 +46,9 @@ def benchmark_accuracy(model, dataset):
     confidences = []
 
     with torch.no_grad():
-        for x, y, init_state in dataset:
-            model.init_state()
-            y_pred = model(x, init_state)
+        for x, y in dataset:
+            model.reset_state()
+            y_pred = model(x)
             correct += (y.argmax(dim=1) == y_pred.argmax(dim=1)).sum()
             total += y.shape[0]
             confidences.append(torch.einsum("ij,ij->i", y, F.sigmoid(y_pred)))
@@ -121,6 +121,16 @@ def zero_shot_accuracy(model,
         total += y.shape[0]
     return correct / total
 
+def zero_shot_accuracy_benchmark(model, dataset):
+    total, correct = 0, 0
+    for traj1, traj2, y in dataset:
+        #traj2 = traj1 # TODO
+        model.reset_state()
+        model(traj1) # populate memory
+        y_pred = model(traj2)
+        correct += (y == y_pred.argmax(dim=1)).sum()
+        total += y.shape[0]
+    return correct / total
 
 def test_two_tunnel(model: POCML):
     trajectory_length, num_desired_trajectories = 10, 1

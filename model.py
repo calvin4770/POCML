@@ -290,9 +290,12 @@ class POCML(torch.nn.Module):
         return torch.stack(predictions, dim=0)
 
 class LSTM(torch.nn.Module):
-    def __init__(self, n_obs, n_actions, n_states, hidden_size):
+    def __init__(self, n_obs, n_actions, n_states, hidden_size, include_init_state_info=True):
         super().__init__()
-        in_dim = n_obs + n_actions
+        if include_init_state_info:
+            in_dim = n_obs + n_actions + n_states
+        else:
+            in_dim = n_obs + n_actions
         out_dim = n_obs
         self.n_obs = n_obs
         self.n_actions = n_actions
@@ -300,36 +303,18 @@ class LSTM(torch.nn.Module):
         self.hidden_size = hidden_size
         self.lstm = torch.nn.LSTM(in_dim, hidden_size, 1, batch_first=True)
         self.fc = torch.nn.Linear(hidden_size, out_dim)
-        self.fc_init1 = torch.nn.Linear(n_states + hidden_size, hidden_size) # h_0
-        self.fc_init2 = torch.nn.Linear(n_states + hidden_size, hidden_size) # c_0
+        self.include_init_state_info = include_init_state_info
 
-        self.init_state()
+        self.reset_state()
 
-    def get_init_state(self, state):
-        #print(state.shape, self.h.squeeze(0).shape)
-        x1 = torch.cat([self.h.squeeze(), state])
-        x2 = torch.cat([self.c.squeeze(), state])
-        self.h, self.c = self.fc_init1(x1).unsqueeze(0), self.fc_init2(x2).unsqueeze(0)
-        return self.h, self.c
-
-    def init_state(self):
+    def reset_state(self):
         self.h, self.c = torch.zeros(1, self.hidden_size).to(torch.float32), torch.zeros(1, self.hidden_size).to(torch.float32)
 
     # state = initial state in traj
-    def forward(self, x, state):
+    def forward(self, x):
         # x has shape [L, in_dim]
-        self.get_init_state(state)
         out, (self.h, self.c) = self.lstm(x, (self.h, self.c)) # [L, hidden_size]
         y = self.fc(out)  # [L, out_dim]
+        if self.include_init_state_info:
+            y = y[1:, :]
         return y
-    
-    def traverse(self, traj):
-        oh_o_first = F.one_hot(traj[0,0], num_classes=self.n_obs).to(torch.float32)
-        self.update_memory(self.u, oh_o_first)
-
-        for o_pre, a, o_next in traj:
-            oh_o_next = F.one_hot(o_next, num_classes=self.n_obs).to(torch.float32)  # one-hot encoding of the first observation
-            oh_a = F.one_hot(a, num_classes=self.n_actions).to(torch.float32)     # one-hot encoding of the first observation
-            
-            hd_s_pred_bind_precleanup = self.update_state(oh_a) # update state by binding action
-            oh_u_next = self.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
