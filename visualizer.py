@@ -4,6 +4,8 @@ import seaborn as sns
 import numpy as np
 import wandb
 
+import networkx as nx
+
 def batch_visualize(distances, legend:str ="Node", methods = "mds", log = False):
     """
     Visualize pairwise distances using various dimensionality reduction methods (e.g., MDS, t-SNE).
@@ -117,3 +119,27 @@ def visualize_loss(loss_record, num_desired_trajectories, trajectory_length, per
     
     plt.show()
 
+def visualize_env(env):   
+    adj = env.adj_matrix
+
+    # Assuming you have the adjacency matrix stored in the variable "adj"
+    G = nx.from_numpy_array(adj.numpy().astype(float), create_using = nx.DiGraph)
+
+    # Draw the graph using seaborn
+    # sns.set()
+    seed = 70 # Consistent graph shape across runs
+    pos = nx.spring_layout(G, seed=seed)
+    nx.draw(G, pos = pos, with_labels=True)
+    # Show the plot
+    plt.show()
+
+    print(f"number of actions: {env.n_actions}")
+
+    print("S-O mapping:")
+    print(env.items)
+    print("action-to-node:")
+    print(env.action_to_node)
+    print("node-to-action-matrix:")
+    print(env.node_to_action_matrix)
+    print("affordance / node - to action:")
+    print(env.affordance)

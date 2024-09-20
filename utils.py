@@ -43,6 +43,15 @@ def filter_param(param: dict, obj) -> dict:
     init_params = signature(obj).parameters
     return {k: v for k, v in param.items() if k in init_params}
 
+def generate_data_name(n_nodes: int, env: str, trajectory_length: int, num_desired_trajectories: int, args = None, seed = 70):
+    name = f"data_n_nodes_{n_nodes}_env_{env}_traj_len_{trajectory_length}_n_traj_{num_desired_trajectories}_args_{args}_seed_{seed}.pickle"
+    return name
+
+def generate_run_name(params):
+    # TODO cutomize run name
+    name = f"tree_sdim_{params['state_dim']}_rfdim_{params['random_feature_dim']}_a_{params['alpha']}_bypass_{params['memory_bypass']}_usgo_{params['update_state_given_obs']}"
+    return name
+
 # Function to set the random seed for reproducibility
 def set_random_seed(seed):
     random.seed(seed)
