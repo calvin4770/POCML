@@ -286,7 +286,8 @@ class BenchmarkTrainer:
                  criterion=None,
                  test_loader=None,
                  device=None,
-                 include_init_state_info=True
+                 include_init_state_info=True,
+                 reset_every=1
                  ):
 
         self.model = model
@@ -295,6 +296,7 @@ class BenchmarkTrainer:
         self.criterion = criterion
         self.test_loader = test_loader
         self.device = device
+        self.reset_every = reset_every
 
         self.train_dataset = preprocess_dataset(model, train_loader, include_init_state_info=include_init_state_info)
         self.test_dataset = preprocess_dataset(model, test_loader, include_init_state_info=include_init_state_info)
@@ -312,14 +314,23 @@ class BenchmarkTrainer:
         model = self.model
         loss_record = []     
         
-        for x, y in self.train_dataset:
-            model.reset_state()
+        for i, (x, y) in enumerate(self.train_dataset):
+            if i % self.reset_every == 0:
+                if i > 0:
+                    loss = self.criterion(
+                        torch.cat(y_pred_agg, dim=0), 
+                        torch.cat(y_agg, dim=0)
+                    )
+                    self.optimizer.zero_grad()
+                    loss.backward()
+                    self.optimizer.step()
+                model.reset_state()
+                y_agg, y_pred_agg = [], []
             y_pred = model(x)
-            loss = self.criterion(y_pred, y)
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-
+            y_agg.append(y)
+            y_pred_agg.append(y_pred)
+            with torch.no_grad():
+                loss = self.criterion(y_pred, y)
             loss_record.append(loss.item())
 
         return loss_record
