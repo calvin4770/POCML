@@ -297,9 +297,18 @@ class BenchmarkTrainer:
         self.test_loader = test_loader
         self.device = device
         self.reset_every = reset_every
+        self.include_init_state_info = include_init_state_info
 
         self.train_dataset = preprocess_dataset(model, train_loader, include_init_state_info=include_init_state_info)
         self.test_dataset = preprocess_dataset(model, test_loader, include_init_state_info=include_init_state_info)
+
+        traj_length = self.train_dataset[0][1].shape[0]
+        start = 1
+        idxs = []
+        for _ in range(self.reset_every):
+            idxs += list(range(start, start + traj_length))
+            start += traj_length + 1
+        self.idxs = idxs
 
     def train(self, epochs:int = 10) -> list:
         loss_record = []
@@ -312,25 +321,31 @@ class BenchmarkTrainer:
 
     def train_epoch(self) -> list:
         model = self.model
-        loss_record = []     
+        loss_record = []
         
         for i, (x, y) in enumerate(self.train_dataset):
             if i % self.reset_every == 0:
                 if i > 0:
-                    loss = self.criterion(
-                        torch.cat(y_pred_agg, dim=0), 
-                        torch.cat(y_agg, dim=0)
-                    )
+                    model.reset_state()
+                    x_agg = torch.cat(x_agg, dim=0)
+                    y_agg = torch.cat(y_agg, dim=0)
+                    y_pred_agg = model(x_agg)
+                    if self.include_init_state_info:
+                        y_pred_agg = y_pred_agg[self.idxs, :]
+                    loss = self.criterion(y_pred_agg, y_agg)
                     self.optimizer.zero_grad()
                     loss.backward()
                     self.optimizer.step()
-                model.reset_state()
-                y_agg, y_pred_agg = [], []
-            y_pred = model(x)
+                x_agg, y_agg = [], []
+            x_agg.append(x)
             y_agg.append(y)
-            y_pred_agg.append(y_pred)
+
             with torch.no_grad():
+                y_pred = model(x)
+                if self.include_init_state_info:
+                    y_pred = y_pred[1:, :]
                 loss = self.criterion(y_pred, y)
             loss_record.append(loss.item())
+
 
         return loss_record

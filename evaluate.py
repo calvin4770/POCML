@@ -48,7 +48,7 @@ def benchmark_accuracy(model, dataset):
     with torch.no_grad():
         for x, y in dataset:
             model.reset_state()
-            y_pred = model(x)
+            y_pred = model(x)[1:, :]
             correct += (y.argmax(dim=1) == y_pred.argmax(dim=1)).sum()
             total += y.shape[0]
             confidences.append(torch.einsum("ij,ij->i", y, F.sigmoid(y_pred)))
@@ -127,7 +127,7 @@ def zero_shot_accuracy_benchmark(model, dataset):
         #traj2 = traj1 # TODO
         model.reset_state()
         model(traj1) # populate memory
-        y_pred = model(traj2)
+        y_pred = model(traj2)[1:, :]
         correct += (y == y_pred.argmax(dim=1)).sum()
         total += y.shape[0]
     return correct / total

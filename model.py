@@ -303,7 +303,6 @@ class LSTM(torch.nn.Module):
         self.hidden_size = hidden_size
         self.lstm = torch.nn.LSTM(in_dim, hidden_size, 1, batch_first=True)
         self.fc = torch.nn.Linear(hidden_size, out_dim)
-        self.include_init_state_info = include_init_state_info
 
         self.reset_state()
 
@@ -315,6 +314,32 @@ class LSTM(torch.nn.Module):
         # x has shape [L, in_dim]
         out, (self.h, self.c) = self.lstm(x, (self.h, self.c)) # [L, hidden_size]
         y = self.fc(out)  # [L, out_dim]
-        if self.include_init_state_info:
-            y = y[1:, :]
+        return y
+    
+class Transformer(torch.nn.Module):
+    def __init__(self, n_obs, n_actions, n_states, d_model, n_heads, hidden_size, include_init_state_info=True):
+        super().__init__()
+        if include_init_state_info:
+            in_dim = n_obs + n_actions + n_states
+        else:
+            in_dim = n_obs + n_actions
+        out_dim = n_obs
+        self.n_obs = n_obs
+        self.n_actions = n_actions
+        self.n_states = n_states
+        self.hidden_size = hidden_size
+        self.model = torch.nn.TransformerEncoderLayer(d_model, n_heads, hidden_size, batch_first=True)
+        self.fc1 = torch.nn.Linear(in_dim, d_model)
+        self.fc2 = torch.nn.Linear(d_model, out_dim)
+
+    def reset_state(self):
+        pass
+
+    # state = initial state in traj
+    def forward(self, x):
+        # x has shape [L, in_dim]
+        out = self.model(self.fc1(x), 
+                         src_mask=torch.nn.Transformer.generate_square_subsequent_mask(x.shape[0]), 
+                         is_causal=True) # [L, hidden_size]
+        y = self.fc2(out)  # [L, out_dim]
         return y
