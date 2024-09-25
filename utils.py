@@ -1,5 +1,7 @@
 import itertools
 from inspect import signature
+import os
+import pickle
 
 import random
 import torch
@@ -55,3 +57,32 @@ def set_random_seed(seed):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+def dataset_loader(directory):
+    """
+    A generator function that yields the contents of each .pickle file in the given directory.
+
+    Parameters:
+    - directory (str): The path to the directory containing the .pickle files.
+
+    Yields:
+    - data: The content of each .pickle file, one at a time.
+    """
+    for filename in os.listdir(directory):
+        if filename.endswith('.pickle'):
+            file_path = os.path.join(directory, filename)
+            with open(file_path, 'rb') as f:
+                data = pickle.load(f)  # Load the .pickle file
+                yield data  # Yield the loaded data one by one
+
+def matches_filter(allowed_values_dict, input_values_dict):
+    # Iterate through the input values dictionary
+    for key, value in allowed_values_dict.items():
+        # If the key exists in allowed_values_dict and the value does not match
+        if key in input_values_dict:
+            if input_values_dict[key] not in value:
+                return False
+        else:
+            return False
+    # If all checks pass, return True
+    return True
