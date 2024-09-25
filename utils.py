@@ -1,5 +1,7 @@
 import itertools
 from inspect import signature
+import os
+import pickle
 
 import random
 import torch
@@ -43,13 +45,8 @@ def filter_param(param: dict, obj) -> dict:
     init_params = signature(obj).parameters
     return {k: v for k, v in param.items() if k in init_params}
 
-def generate_data_name(n_nodes: int, env: str, trajectory_length: int, num_desired_trajectories: int, args = None, seed = 70):
-    name = f"data_n_nodes_{n_nodes}_env_{env}_traj_len_{trajectory_length}_n_traj_{num_desired_trajectories}_args_{args}_seed_{seed}.pickle"
-    return name
-
-def generate_run_name(params):
-    # TODO cutomize run name
-    name = f"tree_sdim_{params['state_dim']}_rfdim_{params['random_feature_dim']}_a_{params['alpha']}_bypass_{params['memory_bypass']}_usgo_{params['update_state_given_obs']}"
+def generate_data_name(n_nodes: int, env_type: str, trajectory_length: int, num_desired_trajectories: int, args = None, seed = 70):
+    name = f"data_n_nodes_{n_nodes}_env_{env_type}_traj_len_{trajectory_length}_n_traj_{num_desired_trajectories}_args_{args}_seed_{seed}.pickle"
     return name
 
 # Function to set the random seed for reproducibility
@@ -60,3 +57,32 @@ def set_random_seed(seed):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+def dataset_loader(directory):
+    """
+    A generator function that yields the contents of each .pickle file in the given directory.
+
+    Parameters:
+    - directory (str): The path to the directory containing the .pickle files.
+
+    Yields:
+    - data: The content of each .pickle file, one at a time.
+    """
+    for filename in os.listdir(directory):
+        if filename.endswith('.pickle'):
+            file_path = os.path.join(directory, filename)
+            with open(file_path, 'rb') as f:
+                data = pickle.load(f)  # Load the .pickle file
+                yield data  # Yield the loaded data one by one
+
+def matches_filter(allowed_values_dict, input_values_dict):
+    # Iterate through the input values dictionary
+    for key, value in allowed_values_dict.items():
+        # If the key exists in allowed_values_dict and the value does not match
+        if key in input_values_dict:
+            if input_values_dict[key] not in value:
+                return False
+        else:
+            return False
+    # If all checks pass, return True
+    return True
