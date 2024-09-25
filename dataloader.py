@@ -489,6 +489,27 @@ class GraphEnv():
             # self.items[L*2+M+2] = 4
             # self.items[L*2+M+3] = 5
             self.items = torch.tensor([0, 1, 2, 3, 4, 3, 5, 4, 6])
+            self.n_items = 9
+
+class Env:
+    def __init__(self, env: GraphEnv):
+        self.env: GraphEnv = env
+        self.edges, self.action_indices = edges_from_adjacency(env.adj_matrix, action_type=env.action_type, args=env.args)
+
+    # provide state idx
+    def init_state(self, state):
+        self.state = state
+
+    def get_obs(self):
+        return F.one_hot(torch.tensor(self.env.items[self.state].item()), num_classes=self.env.size).to(torch.float32)
+    
+    def step(self, action):
+        neighbors = torch.where(self.env.adj_matrix[self.state] > 0)[0].tolist()
+        print(neighbors)
+        for node in neighbors:
+            if self.action_indices[(self.state, node)] == action:
+                self.state = node
+                break
         
 def node_outgoing_actions(adj_matrix, action_type="unique", args=None):
     # This function creates several look-up tables for later computation's convecience

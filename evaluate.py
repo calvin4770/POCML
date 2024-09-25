@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from dataloader import GraphEnv, DataLoader
+from dataloader import GraphEnv, Env
 from model import POCML
 
 def accuracy(model, dataloader):
@@ -133,21 +133,53 @@ def zero_shot_accuracy_benchmark(model, dataset):
     return correct / total
 
 def test_two_tunnel(model: POCML):
-    trajectory_length, num_desired_trajectories = 10, 1
+    trajectory_length, num_desired_trajectories = 15, 1
     env = GraphEnv(
         env='two tunnel', 
         batch_size=trajectory_length, 
         num_desired_trajectories=num_desired_trajectories
     )
-
-    train_dataset = env.gen_dataset()
-    train_dataloader = DataLoader(train_dataset, batch_size=1, shuffle=True)
-    state_idx = env.dataset.start_nodes[0]
-    traj = train_dataloader[0]
-
+    env.populate_graph_preset()
+    traj = torch.tensor(
+        [[6, 0, 3, 8, 5],
+        [3, 0, 2, 5, 2],
+        [2, 2, 1, 2, 1],
+        [1, 2, 0, 1, 0],
+        [0, 1, 3, 0, 3],
+        [3, 1, 5, 3, 6]]
+    )
     model.init_time()
     model.init_memory(bias=False)
-    model.init_state(state_idx=state_idx)
-    model.traverse(traj)
+    model.init_state(state_idx=traj[0, 3])
+    model.traverse(
+        traj,
+        update_state_given_obs=False,
+        update_memory=True,
+        softmax=True,
+        beta=100,
+        debug=True)
 
-    model.init_state
+    ps = []
+    e = Env(env)
+    e.init_state(5)
+    model.init_state(e.get_obs())
+    ps.append(model.u)
+    policy = [1, 3, 3, 1, -1, 0, -1, -1, 0]
+    for _ in range(20):
+        state_est = model.u.argmax().item()
+        a = policy[state_est]
+        print("action", a)
+        e.step(a)
+        if e.state == 6:
+            print("goal state reached")
+            break
+
+        oh_a = F.one_hot(torch.tensor(a), num_classes=4).to(torch.float32)
+        hd_s_pred_bind_precleanup = model.update_state(oh_a) # update state by binding action
+        oh_u_next = model.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
+        oh_o_next = e.get_obs()
+        print(e.get_obs())
+        model.update_state_given_obs(oh_o_next)
+        model.clean_up()
+        ps.append(model.u)
+    return torch.stack(ps)

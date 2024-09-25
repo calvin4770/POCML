@@ -264,9 +264,11 @@ class POCML(torch.nn.Module):
         phi_Q = self.random_feature_map(self.Q)
         return phi_Q.detach()
 
-    def traverse(self, traj, update_state_given_obs=False, update_memory=True, softmax=False, beta=1000):
+    def traverse(self, traj, update_state_given_obs=False, update_memory=True, softmax=False, beta=1000, debug=False):
         oh_o_first = F.one_hot(traj[0,0], num_classes=self.n_obs).to(torch.float32)
         if update_memory:
+            if debug:
+                print(self.u, oh_o_first)
             self.update_memory(self.u, oh_o_first)
 
         predictions = []
@@ -286,6 +288,8 @@ class POCML(torch.nn.Module):
                 self.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
             self.clean_up()
             if update_memory:
+                if debug:
+                    print(oh_u_next, oh_o_next)
                 self.update_memory(oh_u_next, oh_o_next)
         return torch.stack(predictions, dim=0)
 
