@@ -6,7 +6,7 @@ import wandb
 
 import networkx as nx
 
-def batch_visualize(distances, legend:str ="Node", methods = "mds", log = False):
+def batch_visualize(distances, legend:str ="Node", methods = "mds", show = True, log = False):
     """
     Visualize pairwise distances using various dimensionality reduction methods (e.g., MDS, t-SNE).
 
@@ -35,14 +35,14 @@ def batch_visualize(distances, legend:str ="Node", methods = "mds", log = False)
 
     if ("mds" in mtds): 
         ml = MDS(**mtds["mds"])
-        visualize(distances, ml, legend = legend, method_name = "MDS", log = log)
+        visualize(distances, ml, legend = legend, method_name = "MDS", show = show, log = log)
 
     if ("tsne" in mtds): 
         if "perplexity" not in mtds["tsne"]:
             mtds["tsne"]["perplexity"] = min(len(distances)-1, 5)          # TODO: recommend #actions for state visualization
         
         ml = TSNE(**mtds["tsne"])
-        visualize(distances, ml, legend = legend, method_name = "tSNE", log = log)
+        visualize(distances, ml, legend = legend, method_name = "tSNE", show = show, log = log)
 
     # Isomap
     if "isomap" in mtds:
@@ -51,7 +51,7 @@ def batch_visualize(distances, legend:str ="Node", methods = "mds", log = False)
             mtds["isomap"]["n_neighbors"] = min(len(distances)-1, 5)          # TODO
 
         ml = Isomap(**mtds["isomap"])
-        visualize(distances, ml, legend=legend, method_name="Isomap", log=log)
+        visualize(distances, ml, legend=legend, method_name="Isomap", show = show, log=log)
 
     # Locally Linear Embedding (LLE)
     if "lle" in mtds:
@@ -60,7 +60,7 @@ def batch_visualize(distances, legend:str ="Node", methods = "mds", log = False)
             mtds["lle"]["n_neighbors"] = min(len(distances)-1, 5)          # TODO
     
         ml = LocallyLinearEmbedding(**mtds["lle"])
-        visualize(distances, ml, legend=legend, method_name="LLE", log=log)
+        visualize(distances, ml, legend=legend, method_name="LLE", show = show, log=log)
 
     # Spectral Embedding (SE)
     if "se" in mtds:
@@ -68,9 +68,9 @@ def batch_visualize(distances, legend:str ="Node", methods = "mds", log = False)
         #     mtds["se"]["n_neighbors"] = min(len(distances)-1, 2)          # TODO
     
         ml = SpectralEmbedding(**mtds["se"], affinity = "precomputed")
-        visualize(distances, ml, legend=legend, method_name="Spectral Embedding", log=log)
+        visualize(distances, ml, legend=legend, method_name="Spectral Embedding", show = show, log=log)
 
-def visualize(distances, ml = MDS(), legend:str ="Node", method_name = "MDS", log = False):
+def visualize(distances, ml = MDS(), legend:str ="Node", method_name = "MDS", show = True, log = False):
 
     positions = ml.fit_transform(distances)
 
@@ -91,11 +91,14 @@ def visualize(distances, ml = MDS(), legend:str ="Node", method_name = "MDS", lo
     if log:
         wandb.log({title: wandb.Image(fig)})
 
-    plt.show()
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 # our trainer loss plot - flattened 
 
-def visualize_loss(loss_record, num_desired_trajectories, trajectory_length, per_epoch = False):
+def visualize_loss(loss_record, num_desired_trajectories, trajectory_length, per_epoch = False, show = True):
 
     plt.rcParams['font.size'] = 15
     plt.figure(figsize=(20, 6))
@@ -116,8 +119,11 @@ def visualize_loss(loss_record, num_desired_trajectories, trajectory_length, per
         # Add vertical lines at each epochs
         for i in range(0, len(loss_record.reshape(-1)), num_desired_trajectories * (trajectory_length-1)):
             plt.axvline(x=i, color='red', linestyle='--', linewidth=0.5)
-    
-    plt.show()
+
+    if show: 
+        plt.show()
+    else:
+        plt.close()
 
 def visualize_env(env):   
     adj = env.adj_matrix

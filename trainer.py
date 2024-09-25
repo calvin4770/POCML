@@ -153,7 +153,7 @@ class POCMLTrainer(CMLTrainer):
             last_loss = self.train_epoch() # Concatenate the list of losses
             loss_record += last_loss # Concatenate the list of losses
             mean_loss = np.mean(last_loss)
-            if mean_loss == np.nan:
+            if np.isnan(mean_loss):
                 print("mean loss is nan")
                 break
             if mean_loss < best_loss:
@@ -164,7 +164,7 @@ class POCMLTrainer(CMLTrainer):
                 wandb.log({"train/mloss_p_epoch": mean_loss,
                             "train/epoch_ct": self.epoch_ct})
         
-        return np.array(loss_record).reshape(epochs,-1), best_model
+        return np.array(loss_record).reshape(epoch+1,-1), best_model
     
     ## Naming convention
     #    hd_, sa_, oh_/*: respective objects in HD space, state-action space, and ``one_hot" space
