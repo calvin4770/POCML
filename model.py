@@ -94,41 +94,34 @@ class POCML(torch.nn.Module):
         self.clean_up()
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
-    # eps > 0 to ensure we don't divide by zero when retrieving state/obs from memory
-    def init_memory(self, memory=None, eps=1e-5, bias=True):
-        if not self.memory_bypass:
-            if memory is None:
-                if bias:
-                    self.M = torch.nn.Parameter(torch.randn(self.n_states, self.n_obs).abs() * eps + torch.eye(self.n_states), requires_grad=False)
-                else:
-                    self.M = torch.nn.Parameter(torch.ones(self.n_states, self.n_obs) * eps, requires_grad=False)
-            else:
-                self.M = torch.nn.Parameter(memory, requires_grad=False)
+    # memory = (M, state_counts)
+    # eps to make sure state counts can be normalized
+    def init_memory(self, memory=None, eps=1e-3):
+        if memory is None:
+            self.M = torch.nn.Parameter(torch.zeros(self.n_obs, self.n_states))
+            self.state_counts = torch.nn.Parameter(torch.zeros(self.n_states) + eps)
         else:
-            if bias:
-                self.M = torch.nn.Parameter(torch.eye(self.n_states), requires_grad=False)
-            else:
-                self.M = torch.nn.Parameter(torch.ones(self.n_states, self.n_states) * eps, requires_grad=False)
-        self.state_counts = self.M.sum(dim=1)
-        self.obs_counts = self.M.sum(dim=0)
+            self.M = torch.nn.Parameter(memory[0], requires_grad=False)
+            self.state_counts = torch.nn.Parameter(memory[1], requires_grad=False)
 
-    def update_memory(self, u, x):
-        if not self.memory_bypass:
-            self.state_counts += u
-            self.obs_counts += x
-            self.M += torch.outer(u, x)
+    def update_memory(self, u, x, lr=0.1):
+        ps = self.__prob_obs_given_state()
+        dM = torch.einsum("j,ij->ij", u, x.unsqueeze(1) - ps)
+        self.M += lr * dM
 
     # Retrieves state from memory given obs (Eq. 22).
     def get_state_from_memory(self, x):
-        return self.M @ (x / self.obs_counts)
+        p_x_given_u = self.__prob_obs_given_state()
+        p_u = self.state_counts / self.state_counts.sum()
+        return p_x_given_u * p_u / (p_x_given_u @ p_u)
+
+    def __prob_obs_given_state(self):
+        return F.softmax(self.M, dim=0)
 
     # Retrieves obs from memory given state (Eq. 21).
     # input shape: [n_s] OR [..., n_s]
     def get_obs_from_memory(self, u):
-        if len(u.shape) == 1:
-            return self.M.T @ (u / self.state_counts)
-        else:
-            return torch.einsum("ij,...j,j->...i", self.M.T, u, 1 / self.state_counts)
+        return self.__prob_obs_given_state() @ u
 
     # returns \hat{u}_t given \phi(\hat{s}_t')
     def get_expected_state(self, state, in_place=True):

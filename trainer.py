@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from tqdm.notebook import tqdm
+from tqdm import tqdm
 from copy import deepcopy
 
 import wandb
@@ -133,12 +133,10 @@ class POCMLTrainer(CMLTrainer):
         # diff_s_squared = torch.einsum("ijk,ijk->ij", self.diff_s, self.diff_s)
         # sims_pairwise = torch.exp(-alpha * diff_s_squared)
         # sims_s_hat = sims_pairwise @ model.u
-        p = model.get_obs_from_memory(torch.eye(model.n_states)) @ oh_o_next
-        self.p = p
         self.sims_s_hat = sims_s_hat
 
-        r1 = torch.einsum("i,ij->ij", p, sims_pairwise) / (p @ sims_s_hat)
-        r2 = sims_pairwise / sims_s_hat.sum()
+        r1 = sims_pairwise / (sims_s_hat.sum())
+        r2 = torch.einsum("j,jk,j->jk", model.u, sims_pairwise, 1/sims_s_hat)
         self.gamma = r1 - r2
 
     def train(self, epochs:int = 10) -> list:
@@ -222,6 +220,7 @@ class POCMLTrainer(CMLTrainer):
 
         return loss_record
     
+    # TODO
     def __one_time_step(self, model: POCML, o_pre, a, o_next, normalize=False):
         oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
         oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
@@ -230,15 +229,14 @@ class POCMLTrainer(CMLTrainer):
         hd_s_pred_bind_precleanup = model.update_state(oh_a) # update state by binding action
         oh_u_next = model.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
         oh_o_next_pred = model.get_obs_from_memory(oh_u_next) # predict observation with updated state
-        
+        model.update_state_given_obs(oh_o_next)
+
         # Compute and apply update rule
         self.__prep_update(oh_o_next, oh_a)
         self.__update_Q(oh_u_pre)
         self.__update_V(oh_a, oh_u_pre)
 
         # Clean up state \phi(\hat{s}_{t+1})
-        if self.update_state_given_obs:
-            model.update_state_given_obs(oh_o_next) # set u_{t+1} to p(u_{t+1} | s_{t+1}, x_{t+1} )
         model.clean_up()
 
         # Update memory
@@ -265,6 +263,7 @@ class POCMLTrainer(CMLTrainer):
 
         return loss
     
+    # TODO
     def __update_Q(self, oh_u_pre):
         eta = self.lr_Q * self.alpha * self.lr_all
         u = torch.eye(self.model.n_states).to(self.device)
@@ -272,6 +271,7 @@ class POCMLTrainer(CMLTrainer):
         self.model.Q += dQ
         return dQ
 
+    # TODO
     def __update_V(self, oh_a, oh_u_pre):
         eta = self.lr_V * self.alpha * self.lr_all
         dV = eta * torch.einsum("ij,j,ijk,l->kl", self.gamma, oh_u_pre, self.diff_s, oh_a)
