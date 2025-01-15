@@ -80,6 +80,7 @@ class POCMLTrainer(CMLTrainer):
                  lr_Q = 1.,
                  lr_V = 0.1,
                  lr_all = 0.32,
+                 lr_M = 0.1,
                  reset_every = 1, # reset every N trajectories,
                  update_state_given_obs=False,
                  normalize = False,
@@ -100,6 +101,7 @@ class POCMLTrainer(CMLTrainer):
         self.alpha = model.random_feature_map.alpha             # (inverse) lengscale of the RBF
         self.lr_Q = lr_Q
         self.lr_V = lr_V
+        self.lr_M = lr_M
         self.lr_all = lr_all
         self.normalize = normalize
         self.reset_every = reset_every
@@ -115,8 +117,6 @@ class POCMLTrainer(CMLTrainer):
     # # Create tensor reused in the update rule (30 - 33)
     # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
     def __prep_update(self, oh_o_next, oh_a):
-        alpha = self.model.random_feature_map.alpha
-
         model: POCML = self.model
         Q = model.Q
 
@@ -130,14 +130,11 @@ class POCMLTrainer(CMLTrainer):
 
         sims_pairwise = sim(phi_Q, phi_Q * phi_v)
         sims_s_hat = sim(phi_Q, phi_s)
-        # diff_s_squared = torch.einsum("ijk,ijk->ij", self.diff_s, self.diff_s)
-        # sims_pairwise = torch.exp(-alpha * diff_s_squared)
-        # sims_s_hat = sims_pairwise @ model.u
         self.sims_s_hat = sims_s_hat
 
         r1 = sims_pairwise / (sims_s_hat.sum())
         r2 = torch.einsum("j,jk,j->jk", model.u, sims_pairwise, 1/sims_s_hat)
-        self.gamma = r1 - r2
+        self.gamma = r2 - r1
 
     def train(self, epochs:int = 10) -> list:
 
@@ -257,9 +254,7 @@ class POCMLTrainer(CMLTrainer):
             if self.update_state_given_obs:
                 print("Expected next state given obs", model.u)
             print("Predicted obs from action", oh_o_next_pred)
-            print("gamma", self.gamma)
-            print("p", self.p)
-            print("sims_s_hat", self.sims_s_hat)
+            print("Gamma", self.gamma)
 
         return loss
     

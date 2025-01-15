@@ -96,13 +96,14 @@ class POCML(torch.nn.Module):
     # Initialize empty memory, with the option to pass in pre-existing memory.
     # memory = (M, state_counts)
     # eps to make sure state counts can be normalized
-    def init_memory(self, memory=None, eps=1e-3):
-        if memory is None:
-            self.M = torch.nn.Parameter(torch.zeros(self.n_obs, self.n_states))
-            self.state_counts = torch.nn.Parameter(torch.zeros(self.n_states) + eps)
+    def init_memory(self, memory=None, eps=1e-3, memory_bypass=True):
+        if memory_bypass:
+            self.M = torch.nn.Parameter(10 * torch.eye(self.n_states))
         else:
-            self.M = torch.nn.Parameter(memory[0], requires_grad=False)
-            self.state_counts = torch.nn.Parameter(memory[1], requires_grad=False)
+            if memory is None:
+                self.M = torch.nn.Parameter(torch.zeros(self.n_obs, self.n_states))
+            else:
+                self.M = torch.nn.Parameter(memory[0], requires_grad=False)
 
     def update_memory(self, u, x, lr=0.1):
         ps = self.__prob_obs_given_state()
@@ -112,8 +113,7 @@ class POCML(torch.nn.Module):
     # Retrieves state from memory given obs (Eq. 22).
     def get_state_from_memory(self, x):
         p_x_given_u = self.__prob_obs_given_state()
-        p_u = self.state_counts / self.state_counts.sum()
-        return p_x_given_u * p_u / (p_x_given_u @ p_u)
+        return p_x_given_u / p_x_given_u.sum(dim=1)
 
     def __prob_obs_given_state(self):
         return F.softmax(self.M, dim=0)
