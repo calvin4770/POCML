@@ -54,6 +54,7 @@ class POCML(torch.nn.Module):
                  state_dim,
                  random_feature_dim,
                  alpha=1,
+                 batch_size=1,
                  memory_bypass=False,
                  memory=None,
                  obs=None
@@ -66,6 +67,8 @@ class POCML(torch.nn.Module):
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
         self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
         self.M_size = self.n_states * self.n_obs
+        self.batch_size = batch_size
+
         self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
         self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
         self.random_feature_map = RandomFeatureMap(state_dim, random_feature_dim, alpha=alpha)
@@ -82,6 +85,7 @@ class POCML(torch.nn.Module):
         self.t += 1
 
     # Initialize state, with the option to pass in the first observation.
+    # TODO support batch
     def init_state(self, obs=None, state_idx=None):
         if state_idx is not None:
             self.u = torch.zeros(self.n_states)
@@ -94,18 +98,21 @@ class POCML(torch.nn.Module):
         self.clean_up()
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
-    # memory = (M, state_counts)
+    # memory shape [B, n_obs, n_states]
     # eps to make sure state counts can be normalized
     def init_memory(self, memory=None, eps=1e-3):
         if self.memory_bypass:
-            self.M = torch.nn.Parameter(10 * torch.eye(self.n_states), requires_grad=False)
+            M = 10 * torch.eye(self.n_states).unsqueeze(0).tile(self.batch_size, 1, 1)
+            self.M = torch.nn.Parameter(M, requires_grad=False)
         else:
             if memory is None:
-                self.M = torch.nn.Parameter(torch.zeros(self.n_obs, self.n_states), requires_grad=False)
+                self.M = torch.nn.Parameter(torch.zeros(self.batch_size, self.n_obs, self.n_states), requires_grad=False)
             else:
-                self.M = torch.nn.Parameter(memory[0], requires_grad=False)
+                self.M = torch.nn.Parameter(memory, requires_grad=False)
     
-    # TODO: iterative update until convergence or x number of updates?
+    # u [B, n_states]
+    # x [B, n_obs]
+    # TODO batch
     def update_memory(self, u, x, lr=1, max_iter=50, eps=1e-3):
         for i in range(max_iter):
             ps = self.__prob_obs_given_state()
@@ -117,12 +124,14 @@ class POCML(torch.nn.Module):
                 break
 
     # Retrieves state from memory given obs (Eq. 22).
+    # x [B, ]
     def get_state_from_memory(self, x):
         p_x_given_u = self.__prob_obs_given_state().T @ x
         return p_x_given_u / p_x_given_u.sum()
 
+    # M [B, n_obs, n_states]; apply softmax over dim=1
     def __prob_obs_given_state(self):
-        return F.softmax(self.M, dim=0)
+        return F.softmax(self.M, dim=1)
 
     # Retrieves obs from memory given state (Eq. 21).
     # input shape: [n_s] OR [..., n_s]
