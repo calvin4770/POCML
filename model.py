@@ -124,10 +124,10 @@ class POCML(torch.nn.Module):
                 break
 
     # Retrieves state from memory given obs (Eq. 22).
-    # x [B, ]
+    # x [B, n_obs]
     def get_state_from_memory(self, x):
-        p_x_given_u = self.__prob_obs_given_state().T @ x
-        return p_x_given_u / p_x_given_u.sum()
+        p_x_given_u = torch.einsum("bos,bo->bs", self.__prob_obs_given_state(), x)
+        return p_x_given_u / p_x_given_u.sum(dim=1).unsqueeze(-1)
 
     # M [B, n_obs, n_states]; apply softmax over dim=1
     def __prob_obs_given_state(self):
@@ -136,7 +136,7 @@ class POCML(torch.nn.Module):
     # Retrieves obs from memory given state (Eq. 21).
     # input shape: [n_s] OR [..., n_s]
     def get_obs_from_memory(self, u):
-        return self.__prob_obs_given_state() @ u
+        return torch.einsum("bos,bs->bo", self.__prob_obs_given_state(), u)
 
     # returns \hat{u}_t given \phi(\hat{s}_t')
     def get_expected_state(self, state, in_place=True):
@@ -154,15 +154,18 @@ class POCML(torch.nn.Module):
         self.state = self.state * phi_v
         return self.state
     
+    # oh_o_next [B, n_obs]
     def update_state_given_obs(self, oh_o_next, eps=1e-4):
-        x_given_u = self.get_obs_from_memory(torch.eye(self.n_states)) @ oh_o_next
-        u = (self.u + eps) * (x_given_u + eps)
-        self.u = u / u.sum()
+        x_given_u = self.get_state_from_memory(oh_o_next) # [B, n_s]
+        u = (self.u) * (x_given_u) # [B, n_s]
+        self.u = u / u.sum(dim=1).unsqueeze(-1)
         return self.u
 
+    # state [B, state_dim]
+    # u [B, n_states]
     def clean_up(self):
         phi_Q = self.get_state_kernel()
-        self.state = phi_Q @ self.u.to(torch.complex64)
+        self.state = torch.einsum("bij,bj->bi", phi_Q, self.u.to(torch.complex64))
         return self.state
 
     # Given the goal state, return the utilities for all actions (Eq. 35).
@@ -250,8 +253,6 @@ class POCML(torch.nn.Module):
         return self.V
     
     # Stat. Analysis
-
-
     def get_action_differences(self):
         return ((self.V[:, :, None] - self.V[:, None, :]).norm(p=2, dim=0)).detach()
     
@@ -272,6 +273,7 @@ class POCML(torch.nn.Module):
         phi_Q = self.random_feature_map(self.Q)
         return phi_Q.detach()
 
+    # TODO batch
     def traverse(self, traj, update_state_given_obs=False, update_memory=True, softmax=False, beta=1000, debug=False):
         oh_o_first = F.one_hot(traj[0,0], num_classes=self.n_obs).to(torch.float32)
         if update_memory:
