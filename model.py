@@ -85,14 +85,14 @@ class POCML(torch.nn.Module):
         self.t += 1
 
     # Initialize state, with the option to pass in the first observation.
-    # TODO support batch
+    # obs [B, n_obs]
+    # state_idx [B]
     def init_state(self, obs=None, state_idx=None):
         if state_idx is not None:
-            self.u = torch.zeros(self.n_states)
-            self.u[state_idx] = 1
+            self.u = F.one_hot(state_idx, num_classes=self.n_states)
         else:
             if obs is None:
-                self.u = torch.ones(self.n_states) / self.n_states
+                self.u = torch.ones(self.batch_size, self.n_states) / self.n_states
             else:
                 self.u = self.get_state_from_memory(obs)
         self.clean_up()
@@ -112,15 +112,13 @@ class POCML(torch.nn.Module):
     
     # u [B, n_states]
     # x [B, n_obs]
-    # TODO batch
     def update_memory(self, u, x, lr=1, max_iter=50, eps=1e-3):
         for i in range(max_iter):
-            ps = self.__prob_obs_given_state()
-            dM = torch.einsum("j,ij->ij", u, x.unsqueeze(1) - ps)
+            ps = self.__prob_obs_given_state() # [B, n_obs, n_states]
+            dM = torch.einsum("bj,bij->bij", u, x.unsqueeze(-1) - ps)
             self.M += lr * dM
-            dM_norm = dM.norm(p="fro") / self.M_size
-            #print(i, "|dM|:", dM_norm)
-            if dM_norm < eps:
+            dM_norm = dM.norm(p="fro", dim=[1, 2]) / self.M_size
+            if dM_norm.max() < eps:
                 break
 
     # Retrieves state from memory given obs (Eq. 22).
