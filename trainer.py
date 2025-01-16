@@ -81,6 +81,8 @@ class POCMLTrainer(CMLTrainer):
                  lr_V = 0.1,
                  lr_all = 0.32,
                  lr_M = 0.1,
+                 reg_Q = 0,
+                 reg_V = 0,
                  reset_every = 1, # reset every N trajectories,
                  update_state_given_obs=False,
                  normalize = False,
@@ -103,6 +105,8 @@ class POCMLTrainer(CMLTrainer):
         self.lr_V = lr_V
         self.lr_M = lr_M
         self.lr_all = lr_all
+        self.reg_Q = reg_Q
+        self.reg_V = reg_V
         self.normalize = normalize
         self.reset_every = reset_every
         self.update_state_given_obs = update_state_given_obs
@@ -263,14 +267,16 @@ class POCMLTrainer(CMLTrainer):
         eta = self.lr_Q * self.alpha * self.lr_all
         u = torch.eye(self.model.n_states).to(self.device)
         dQ = eta * torch.einsum("ij,j,ijk,il->kl", self.gamma, oh_u_pre, -self.diff_s, u)
-        self.model.Q += dQ
+        reg = -self.model.Q
+        self.model.Q += dQ + self.reg_Q * reg
         return dQ
 
     # TODO
     def __update_V(self, oh_a, oh_u_pre):
         eta = self.lr_V * self.alpha * self.lr_all
         dV = eta * torch.einsum("ij,j,ijk,l->kl", self.gamma, oh_u_pre, self.diff_s, oh_a)
-        self.model.V += dV
+        reg = -self.model.V
+        self.model.V += dV + self.reg_V * reg
         return dV
     
 class BenchmarkTrainer:
