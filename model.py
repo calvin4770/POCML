@@ -65,7 +65,7 @@ class POCML(torch.nn.Module):
         self.state_dim = state_dim # dimension of state space
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
         self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
-
+        self.M_size = self.n_states * self.n_obs
         self.Q = torch.nn.Parameter(torch.randn(state_dim, n_states, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
         self.V = torch.nn.Parameter(torch.randn(state_dim, n_actions, dtype = torch.float32) / np.sqrt(state_dim), requires_grad=False)
         self.random_feature_map = RandomFeatureMap(state_dim, random_feature_dim, alpha=alpha)
@@ -104,11 +104,17 @@ class POCML(torch.nn.Module):
                 self.M = torch.nn.Parameter(torch.zeros(self.n_obs, self.n_states), requires_grad=False)
             else:
                 self.M = torch.nn.Parameter(memory[0], requires_grad=False)
-
-    def update_memory(self, u, x, lr=0.1):
-        ps = self.__prob_obs_given_state()
-        dM = torch.einsum("j,ij->ij", u, x.unsqueeze(1) - ps)
-        self.M += lr * dM
+    
+    # TODO: iterative update until convergence or x number of updates?
+    def update_memory(self, u, x, lr=1, max_iter=50, eps=1e-3):
+        for i in range(max_iter):
+            ps = self.__prob_obs_given_state()
+            dM = torch.einsum("j,ij->ij", u, x.unsqueeze(1) - ps)
+            self.M += lr * dM
+            dM_norm = dM.norm(p="fro") / self.M_size
+            #print(i, "|dM|:", dM_norm)
+            if dM_norm < eps:
+                break
 
     # Retrieves state from memory given obs (Eq. 22).
     def get_state_from_memory(self, x):

@@ -195,7 +195,7 @@ class POCMLTrainer(CMLTrainer):
                 # train model
                 #model.init_state(obs = oh_o_first) #  treat the first observation as the special case. 
                 model.init_state(state_idx=trajectory[0,0,4])
-                model.update_memory(model.u, oh_o_first)        #  memorize the first observation
+                model.update_memory(model.u, oh_o_first, lr=self.lr_M)        #  memorize the first observation
 
                 phi_Q = model.get_state_kernel()
                 if self.debug:
@@ -241,7 +241,7 @@ class POCMLTrainer(CMLTrainer):
         model.clean_up()
 
         # Update memory
-        model.update_memory(oh_u_next, oh_o_next)
+        model.update_memory(oh_u_next, oh_o_next, lr=self.lr_M)
 
         if normalize: 
             model.normalize_action() # normalize action
