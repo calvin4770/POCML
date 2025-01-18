@@ -121,23 +121,25 @@ class POCMLTrainer(CMLTrainer):
     # # Create tensor reused in the update rule (30 - 33)
     # # the tensor U is of shape n_s * n_s * n where U[i,j,k] = \omega_{i,j,k} K_{i，j} (s^{hat}_j - s_i) 
     def __prep_update(self, oh_o_next, oh_a):
+        relu = lambda x: torch.maximum(x, torch.ones_like(x) * 1e-6)
         model: POCML = self.model
         Q = model.Q
 
-        v_t = model.V @ oh_a                                # v_t []
-        s_hat = (Q.T) + v_t[None, :]                        # s_hat_j = (s_j + v_t)
-        self.diff_s = (Q.T)[:, None, :] - s_hat[None, :, :]      # generate n_s * n_s * n tensor [s_i - s_hat_j]_i,j
-
+        v_t = torch.einsum("da,ba->bd", model.V, oh_a)
+        s_hat = Q.unsqueeze(0) + v_t.unsqueeze(-1)          # s_hat_j = (s_j + v_t) [B, state_dim, n_states]
+        self.diff_s = model.Q.unsqueeze(0)[:, :, :, None] - s_hat[:, :, None, :] # [B, D, n_s, n_s]
+        
         phi_Q = model.get_state_kernel()
         phi_s = model.state # \phi(\hat{s}_t)
-        phi_v = model.random_feature_map(v_t).unsqueeze(dim=1)
+        phi_v = model.random_feature_map(v_t)
 
-        sims_pairwise = sim(phi_Q, phi_Q * phi_v)
-        sims_s_hat = sim(phi_Q, phi_s)
+        phi_Q2 = phi_Q.unsqueeze(0) * phi_v.unsqueeze(-1) # [B, D, n_s]
+        sims_pairwise = relu(torch.einsum("ds,bdt->bst", phi_Q, phi_Q2.conj()).real / phi_Q.shape[0]) # [B, n_s, n_s]
+        sims_s_hat = sim(phi_Q, phi_s.T).T # [B, n_s]
         self.sims_s_hat = sims_s_hat
 
-        r1 = sims_pairwise / (sims_s_hat.sum())
-        r2 = torch.einsum("j,jk,j->jk", model.u, sims_pairwise, 1/sims_s_hat)
+        r1 = sims_pairwise / (sims_s_hat.sum(dim=1))[:, None, None]
+        r2 = torch.einsum("bj,bjk,bj->bjk", model.u, sims_pairwise, 1/sims_s_hat)
         self.gamma = r2 - r1
 
     def train(self, epochs:int = 10) -> list:
@@ -185,7 +187,7 @@ class POCMLTrainer(CMLTrainer):
 
                 model.init_time()
 
-                oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
+                oh_o_first = F.one_hot(trajectory[:,0,0], num_classes=model.n_obs).to(torch.float32)
 
                 # TODO reset graph instance
                 if tt % self.reset_every == 0:
@@ -194,7 +196,7 @@ class POCMLTrainer(CMLTrainer):
                 
                 # train model
                 #model.init_state(obs = oh_o_first) #  treat the first observation as the special case. 
-                model.init_state(state_idx=trajectory[0,0,4])
+                model.init_state(state_idx=trajectory[:,0,4])
                 model.update_memory(model.u, oh_o_first, lr=self.lr_M)        #  memorize the first observation
 
                 phi_Q = model.get_state_kernel()
@@ -204,7 +206,11 @@ class POCMLTrainer(CMLTrainer):
                     print("State kernel similarities (want close to identitiy)\n", sim(phi_Q, phi_Q))
                 
                 # o_pre  is the observation at time t
-                for ttt, (o_pre, a, o_next, _, _) in enumerate(trajectory[0].to(device)):
+                for t in range(trajectory.shape[1]):
+                    o_pre = trajectory[:, t, 0]
+                    a = trajectory[:, t, 1]
+                    o_next = trajectory[:, t, 2]
+
                     loss = self.__one_time_step(model, o_pre, a, o_next, normalize=normalize)
                     loss_record.append(loss.cpu().item())
                     
@@ -221,7 +227,6 @@ class POCMLTrainer(CMLTrainer):
 
         return loss_record
     
-    # TODO
     def __one_time_step(self, model: POCML, o_pre, a, o_next, normalize=False):
         oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
         oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
@@ -248,7 +253,7 @@ class POCMLTrainer(CMLTrainer):
 
         model.inc_time()
 
-        loss = -torch.log(oh_o_next_pred[o_next]) # cross entropy
+        loss = -torch.log(torch.einsum("bi,bi->b", oh_u_next, oh_o_next)).mean() # cross entropy
 
         if self.debug: 
             print("Time", model.t)
@@ -262,19 +267,17 @@ class POCMLTrainer(CMLTrainer):
 
         return loss
     
-    # TODO
     def __update_Q(self, oh_u_pre):
         eta = self.lr_Q * self.alpha * self.lr_all
         u = torch.eye(self.model.n_states).to(self.device)
-        dQ = eta * torch.einsum("ij,j,ijk,il->kl", self.gamma, oh_u_pre, -self.diff_s, u)
+        dQ = eta * torch.einsum("bij,bj,bkij,il->kl", self.gamma, oh_u_pre, -self.diff_s, u) / self.model.batch_size
         reg = -self.model.Q
         self.model.Q += dQ + self.reg_Q * reg
         return dQ
 
-    # TODO
     def __update_V(self, oh_a, oh_u_pre):
         eta = self.lr_V * self.alpha * self.lr_all
-        dV = eta * torch.einsum("ij,j,ijk,l->kl", self.gamma, oh_u_pre, self.diff_s, oh_a)
+        dV = eta * torch.einsum("bij,bj,bkij,bl->kl", self.gamma, oh_u_pre, self.diff_s, oh_a) / self.model.batch_size
         reg = -self.model.V
         self.model.V += dV + self.reg_V * reg
         return dV

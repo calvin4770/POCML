@@ -17,8 +17,10 @@ def sim(x, y, eps=1e-6):
         return relu(torch.einsum("ji,j->i", x, y.conj()).real / D)
     elif len(x.shape) == 1 and len(y.shape) == 2:
         return relu(torch.einsum("j,ji->i", x, y.conj()).real / D)
-    else:
+    elif len(x.shape) == 2 and len(y.shape) == 2:
         return relu(torch.einsum("ir,ic->rc", x, y.conj()).real / D)
+    else:
+        return relu(torch.einsum("ir,i...->r...", x, y.conj()).real / D)
 
 class RandomFeatureMap(torch.nn.Module):
     def __init__(self, in_dim, out_dim, alpha=1):
@@ -32,18 +34,15 @@ class RandomFeatureMap(torch.nn.Module):
     # Applies the random feature map.
     # Input shape: [in_dim]
     # Output shape: [out_dim], OR
-    # Input shape: [in_dim, ...]
-    # Output shape: [out_dim, ...]
+    # Input shape: [..., in_dim]
+    # Output shape: [..., out_dim]
     def forward(self, x):
         if len(x.shape) == 1:
             out = torch.exp(1j * self.W @ x.to(torch.complex64) / self.alpha)
             return out
         else:
-            # n = torch.norm(x, p=2, dim=-1, keepdim=True)
             n = 1
-            out = torch.exp(1j * torch.einsum("ij,j...->i...", self.W, (x/n).to(torch.complex64)) / self.alpha )
-            # out = torch.exp(1j * ((x/n).to(torch.complex64) @ self.W.T) / self.alpha ) / self.sqrt_out_dim
-            #return out/torch.norm(out, p=2, dim=-1, keepdim=True)
+            out = torch.exp(1j * torch.einsum("ij,...j->...i", self.W, (x/n).to(torch.complex64)) / self.alpha )
             return out
 
 class POCML(torch.nn.Module):
@@ -139,15 +138,16 @@ class POCML(torch.nn.Module):
     # returns \hat{u}_t given \phi(\hat{s}_t')
     def get_expected_state(self, state, in_place=True):
         phi_Q = self.get_state_kernel()
-        sims = sim(phi_Q, state)
-        u = sims / sims.sum()
+        sims = sim(phi_Q, state.T).T # [B, n_states]
+        u = sims / sims.sum(dim=1).unsqueeze(-1)
         if in_place:
             self.u = u
         return u
     
     # Update state given action (pre clean-up) (Eq. 18).
+    # action [B, n_actions]
     def update_state(self, action):
-        v = self.V @ action
+        v = torch.einsum("ij,bj->bi", self.V, action)
         phi_v = self.random_feature_map(v)
         self.state = self.state * phi_v
         return self.state
@@ -163,7 +163,7 @@ class POCML(torch.nn.Module):
     # u [B, n_states]
     def clean_up(self):
         phi_Q = self.get_state_kernel()
-        self.state = torch.einsum("bij,bj->bi", phi_Q, self.u.to(torch.complex64))
+        self.state = torch.einsum("ij,bj->bi", phi_Q, self.u.to(torch.complex64))
         return self.state
 
     # Given the goal state, return the utilities for all actions (Eq. 35).
@@ -258,7 +258,7 @@ class POCML(torch.nn.Module):
         return (self.V.T @ self.V).detach()
     
     def get_action_kernel(self):
-        phi_V = self.random_feature_map(self.V)
+        phi_V = self.random_feature_map(self.V.T).T
         return phi_V.detach()
     
     def get_state_differences(self):
@@ -268,7 +268,7 @@ class POCML(torch.nn.Module):
         return (self.Q.T @ self.Q).detach()
 
     def get_state_kernel(self):
-        phi_Q = self.random_feature_map(self.Q)
+        phi_Q = self.random_feature_map(self.Q.T).T
         return phi_Q.detach()
 
     # TODO batch

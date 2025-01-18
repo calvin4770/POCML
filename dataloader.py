@@ -168,10 +168,11 @@ class RandomWalkDataset(Dataset):
         self.trajectory_length = trajectory_length
         self.permissible_starts = permissible_starts
         self.edges, self.action_indices = edges_from_adjacency(adj_matrix, action_type=action_type, args=args)
+
         if permissible_starts is None:
             start_nodes = torch.randint(0, adj_matrix.size(0), (num_trajectories,)).tolist() # random start nodes
         else:
-            start_nodes = np.random.choice(permissible_starts, self.num_trajectories).tolist()
+            start_nodes = np.random.choice(permissible_starts, num_trajectories).tolist()
         self.start_nodes = start_nodes
         self.data = []
         for node in start_nodes:
@@ -351,7 +352,7 @@ class GraphEnv():
             self,
             n_items=10, # number of possible observations
             env='random', 
-            batch_size=15, 
+            trajectory_length=15,
             num_desired_trajectories=10, 
             device=None, 
             unique=False, # each state is assigned a unique observation if true
@@ -413,7 +414,7 @@ class GraphEnv():
             self.n_items = n_items
         else:
             self.n_items = self.size
-        self.batch_size = batch_size
+        self.trajectory_length = trajectory_length
         self.num_desired_trajectories = num_desired_trajectories
         self.start_state_idx = np.random.randint(0, self.n_items) # fixed start state for trajectories if enabled
         self.populate_graph()
@@ -429,9 +430,9 @@ class GraphEnv():
         else:
             self.items = obs_state_map
 
-    def gen_dataset(self, batch_size=None, num_desired_trajectories=None):
-        if batch_size is None:
-            batch_size = self.batch_size
+    def gen_dataset(self, batch_size=None, trajectory_length=None, num_desired_trajectories=None):
+        if trajectory_length is None:
+            trajectory_length = self.trajectory_length
         if num_desired_trajectories is None:
             num_desired_trajectories = self.num_desired_trajectories
 
@@ -441,14 +442,15 @@ class GraphEnv():
             
         # TODO: fixed start
         self.dataset = RandomWalkDataset(
-            self.adj_matrix,
-            batch_size,
-            num_desired_trajectories,
-            self.items,
+            adj_matrix=self.adj_matrix,
+            trajectory_length=self.trajectory_length,
+            num_trajectories=self.num_desired_trajectories,
+            items=self.items,
             action_type=action_type,
             args=self.args,
             permissible_starts=([0, 1, 2, 3, 5, 6, 8] if self.env == 'two tunnel' else None)
         )
+
         if self.env not in ["regular", "two tunnel", "grid", "tree"]:
             self.n_actions = len(self.dataset.action_indices)
         return self.dataset.data
