@@ -17,10 +17,8 @@ def sim(x, y, eps=1e-6):
         return relu(torch.einsum("ji,j->i", x, y.conj()).real / D)
     elif len(x.shape) == 1 and len(y.shape) == 2:
         return relu(torch.einsum("j,ji->i", x, y.conj()).real / D)
-    elif len(x.shape) == 2 and len(y.shape) == 2:
-        return relu(torch.einsum("ir,ic->rc", x, y.conj()).real / D)
     else:
-        return relu(torch.einsum("ir,i...->r...", x, y.conj()).real / D)
+        return relu(torch.einsum("ir,ic->rc", x, y.conj()).real / D)
 
 class RandomFeatureMap(torch.nn.Module):
     def __init__(self, in_dim, out_dim, alpha=1):
@@ -54,7 +52,7 @@ class POCML(torch.nn.Module):
                  random_feature_dim,
                  alpha=1,
                  batch_size=1,
-                 memory_bypass=False,
+                 memory_bias=False,
                  memory=None,
                  obs=None
     ):
@@ -64,7 +62,7 @@ class POCML(torch.nn.Module):
         self.n_actions = n_actions # number of actions
         self.state_dim = state_dim # dimension of state space
         self.random_feature_dim = random_feature_dim # dimension of random feature map output
-        self.memory_bypass = memory_bypass # whether to bypass memory; bypassed memory will directly use \phi(Q) as memory
+        self.memory_bias = memory_bias # whether to bias memory
         self.M_size = self.n_states * self.n_obs
         self.batch_size = batch_size
 
@@ -100,21 +98,25 @@ class POCML(torch.nn.Module):
     # memory shape [B, n_obs, n_states]
     # eps to make sure state counts can be normalized
     def init_memory(self, memory=None, eps=1e-3):
-        if self.memory_bypass:
-            M = 10 * torch.eye(self.n_states).unsqueeze(0).tile(self.batch_size, 1, 1)
+        if self.memory_bias:
+            M = torch.eye(self.n_states).unsqueeze(0).tile(self.batch_size, 1, 1)
             self.M = torch.nn.Parameter(M, requires_grad=False)
         else:
             if memory is None:
-                self.M = torch.nn.Parameter(torch.zeros(self.batch_size, self.n_obs, self.n_states), requires_grad=False)
+                self.M = torch.nn.Parameter(eps * torch.randn(self.batch_size, self.n_obs, self.n_states), requires_grad=False)
             else:
                 self.M = torch.nn.Parameter(memory, requires_grad=False)
     
     # u [B, n_states]
     # x [B, n_obs]
-    def update_memory(self, u, x, lr=1, max_iter=50, eps=1e-3):
+    def update_memory(self, u, x, lr=1, max_iter=50, eps=1e-3, reg_M=0.1):
         for i in range(max_iter):
             ps = self.__prob_obs_given_state() # [B, n_obs, n_states]
             dM = torch.einsum("bj,bij->bij", u, x.unsqueeze(-1) - ps)
+            if reg_M > 0:
+                #reg = self.M @ (self.M.mT @ self.M - torch.eye(self.n_states)) # orthogonality regularization
+                reg = torch.sign(self.M) # sparsity regularization
+                dM -= - reg_M * reg
             self.M += lr * dM
             dM_norm = dM.norm(p="fro", dim=[1, 2]) / self.M_size
             if dM_norm.max() < eps:
@@ -128,7 +130,7 @@ class POCML(torch.nn.Module):
 
     # M [B, n_obs, n_states]; apply softmax over dim=1
     def __prob_obs_given_state(self):
-        return F.softmax(self.M, dim=1)
+        return F.softmax(10 * self.M, dim=1)
 
     # Retrieves obs from memory given state (Eq. 21).
     # input shape: [n_s] OR [..., n_s]

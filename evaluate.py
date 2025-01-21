@@ -6,17 +6,20 @@ from model import POCML
 
 def accuracy(model, dataloader):
     total, correct = 0, 0
-    confidences = []
+    confidences = torch.tensor([])
 
     for trajectory in dataloader:
         model.init_time()
 
-        oh_o_first = F.one_hot(trajectory[0,0,0], num_classes=model.n_obs).to(torch.float32)
+        oh_o_first = F.one_hot(trajectory[:,0,0], num_classes=model.n_obs).to(torch.float32)
 
         # model.init_state(state_idx=trajectory[0,0,4])       
         model.init_state(obs = oh_o_first)                  #  treat the first observation as the spacial case. 
-        #model.update_memory(model.state, oh_o_first)        #  memorize the first observation
-        for o_pre, a, o_next, _, _ in trajectory[0]:
+        #model.update_memory(model.u, oh_o_first, lr=self.lr_M, reg_M=self.reg_M, max_iter=self.max_iter_M, eps=self.eps_M)        #  memorize the first observation
+        for t in range(trajectory.shape[1]):
+            o_pre = trajectory[:, t, 0]
+            a = trajectory[:, t, 1]
+            o_next = trajectory[:, t, 2]
 
             oh_o_next = F.one_hot(o_next, num_classes=model.n_obs).to(torch.float32)  # one-hot encoding of the first observation
             oh_a = F.one_hot(a, num_classes=model.n_actions).to(torch.float32)     # one-hot encoding of the first observation
@@ -33,12 +36,11 @@ def accuracy(model, dataloader):
             #model.update_memory(oh_u_next, oh_o_next)
 
             model.inc_time()
-
-            confidences.append(oh_o_next_pred[o_next].item())
-            if oh_o_next[torch.argmax(oh_o_next_pred, dim=0)] == 1:
-                correct += 1
-            total += 1
-    return correct / total, confidences
+            c = torch.einsum("bi,bi->b", oh_o_next_pred, oh_o_next)
+            confidences = torch.cat([confidences, c], dim=0)
+            correct += (torch.argmax(oh_o_next_pred, dim=1) == torch.argmax(oh_o_next, dim=1)).sum().item()
+            total += oh_o_next.shape[0]
+    return correct / total, confidences.tolist()
 
 def benchmark_accuracy(model, dataset):
     total, correct = 0, 0
@@ -72,7 +74,8 @@ def state_transition_consistency(model, env):
             action_idx = node_to_action_matrix[src][tgt]
             if action_idx != -1:
                 pred_state = phi_Q[:, src] * phi_V[:, action_idx]
-                ps = model.get_expected_state(pred_state, in_place=False)
+                pred_state = pred_state.unsqueeze(0)
+                ps = model.get_expected_state(pred_state, in_place=False).squeeze()
                 confidences.append(ps[tgt].item())
                 if torch.argmax(ps) == tgt:
                     correct += 1

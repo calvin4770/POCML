@@ -83,6 +83,8 @@ class POCMLTrainer(CMLTrainer):
                  lr_M = 0.1,
                  reg_Q = 0,
                  reg_V = 0,
+                 reg_M = 0.1,
+                 max_iter_M=50, eps_M=1e-3,
                  reset_every = 1, # reset every N trajectories,
                  update_state_given_obs=False,
                  normalize = False,
@@ -107,9 +109,12 @@ class POCMLTrainer(CMLTrainer):
         self.lr_all = lr_all
         self.reg_Q = reg_Q
         self.reg_V = reg_V
+        self.reg_M = reg_M
         self.normalize = normalize
         self.reset_every = reset_every
         self.update_state_given_obs = update_state_given_obs
+        self.max_iter_M = max_iter_M
+        self.eps_M = eps_M
 
         self.step_ct = 0                                        # step count
         self.traj_ct = 0                                        # trajectory count
@@ -189,7 +194,7 @@ class POCMLTrainer(CMLTrainer):
 
                 oh_o_first = F.one_hot(trajectory[:,0,0], num_classes=model.n_obs).to(torch.float32)
 
-                # TODO reset graph instance
+                # reset memory every N trajectories
                 if tt % self.reset_every == 0:
                     #model.init_memory(model.M.detach() / 10)
                     model.init_memory()
@@ -197,11 +202,11 @@ class POCMLTrainer(CMLTrainer):
                 # train model
                 #model.init_state(obs = oh_o_first) #  treat the first observation as the special case. 
                 model.init_state(state_idx=trajectory[:,0,4])
-                model.update_memory(model.u, oh_o_first, lr=self.lr_M)        #  memorize the first observation
+                model.update_memory(model.u, oh_o_first, lr=self.lr_M, reg_M=self.reg_M, max_iter=self.max_iter_M, eps=self.eps_M)        #  memorize the first observation
 
                 phi_Q = model.get_state_kernel()
                 if self.debug:
-                    print("Current Trajectory", trajectory[0])
+                    print("Current Trajectory", trajectory[:])
                     print("Action similarities\n", model.get_action_similarities())
                     print("State kernel similarities (want close to identitiy)\n", sim(phi_Q, phi_Q))
                 
@@ -246,14 +251,14 @@ class POCMLTrainer(CMLTrainer):
         model.clean_up()
 
         # Update memory
-        model.update_memory(oh_u_next, oh_o_next, lr=self.lr_M)
+        model.update_memory(oh_u_next, oh_o_next, lr=self.lr_M, reg_M=self.reg_M, max_iter=self.max_iter_M, eps=self.eps_M)
 
         if normalize: 
             model.normalize_action() # normalize action
 
         model.inc_time()
 
-        loss = -torch.log(torch.einsum("bi,bi->b", oh_u_next, oh_o_next)).mean() # cross entropy
+        loss = -torch.log(torch.einsum("bi,bi->b", oh_o_next_pred, oh_o_next)).mean() # cross entropy
 
         if self.debug: 
             print("Time", model.t)
@@ -271,7 +276,8 @@ class POCMLTrainer(CMLTrainer):
         eta = self.lr_Q * self.alpha * self.lr_all
         u = torch.eye(self.model.n_states).to(self.device)
         dQ = eta * torch.einsum("bij,bj,bkij,il->kl", self.gamma, oh_u_pre, -self.diff_s, u) / self.model.batch_size
-        reg = -self.model.Q
+        reg = -self.model.Q # L2 reg
+        # TODO orthogonality reg on phi(Q) OR pairwise state differences large (exp scale)
         self.model.Q += dQ + self.reg_Q * reg
         return dQ
 
