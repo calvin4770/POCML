@@ -275,17 +275,21 @@ class POCMLTrainer(CMLTrainer):
     def __update_Q(self, oh_u_pre):
         eta = self.lr_Q * self.alpha * self.lr_all
         u = torch.eye(self.model.n_states).to(self.device)
-        dQ = eta * torch.einsum("bij,bj,bkij,il->kl", self.gamma, oh_u_pre, -self.diff_s, u) / self.model.batch_size
-        reg = -self.model.Q # L2 reg
+        dQ = torch.einsum("bij,bj,bkij,il->kl", self.gamma, oh_u_pre, -self.diff_s, u) / self.model.batch_size
+        if self.reg_Q > 0:
+            reg = -self.model.Q # L2 reg
+            dQ += self.reg_Q * reg
         # TODO orthogonality reg on phi(Q) OR pairwise state differences large (exp scale)
-        self.model.Q += dQ + self.reg_Q * reg
+        self.model.Q += eta * dQ
         return dQ
 
     def __update_V(self, oh_a, oh_u_pre):
         eta = self.lr_V * self.alpha * self.lr_all
-        dV = eta * torch.einsum("bij,bj,bkij,bl->kl", self.gamma, oh_u_pre, self.diff_s, oh_a) / self.model.batch_size
-        reg = -self.model.V
-        self.model.V += dV + self.reg_V * reg
+        dV = torch.einsum("bij,bj,bkij,bl->kl", self.gamma, oh_u_pre, self.diff_s, oh_a) / self.model.batch_size
+        if self.reg_V > 0:
+            reg = -self.model.V # L2 reg
+            dV += self.reg_V * reg
+        self.model.V += eta * dV
         return dV
     
 class BenchmarkTrainer:
