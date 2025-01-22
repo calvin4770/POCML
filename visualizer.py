@@ -10,7 +10,7 @@ def pca_visualize(model, env, log=False, show=True):
     pca = PCA(2)
     Q_pca = pca.fit_transform(model.Q.T)
     V_pca = pca.transform(model.V.T)
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=300)
     ax.scatter(Q_pca[:, 0], Q_pca[:, 1])
     ax.set_xlabel("PC 1")
     ax.set_ylabel("PC 2")
