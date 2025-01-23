@@ -84,7 +84,7 @@ class POCML(torch.nn.Module):
     # Initialize state, with the option to pass in the first observation.
     # obs [B, n_obs]
     # state_idx [B]
-    def init_state(self, obs=None, state_idx=None):
+    def init_state(self, obs=None, state_idx=None, mask=None):
         if state_idx is not None:
             self.u = F.one_hot(state_idx, num_classes=self.n_states)
         else:
@@ -92,18 +92,19 @@ class POCML(torch.nn.Module):
                 self.u = torch.ones(self.batch_size, self.n_states) / self.n_states
             else:
                 self.u = self.get_state_from_memory(obs)
+        if mask is not None: self.u *= mask
         self.clean_up()
 
     # Initialize empty memory, with the option to pass in pre-existing memory.
     # memory shape [B, n_obs, n_states]
     # eps to make sure state counts can be normalized
-    def init_memory(self, memory=None, eps=1e-3):
+    def init_memory(self, memory=None):
         if self.memory_bias:
             M = torch.eye(self.n_states).unsqueeze(0).tile(self.batch_size, 1, 1)
             self.M = torch.nn.Parameter(M, requires_grad=False)
         else:
             if memory is None:
-                self.M = torch.nn.Parameter(eps * torch.randn(self.batch_size, self.n_obs, self.n_states), requires_grad=False)
+                self.M = torch.nn.Parameter(torch.zeros(self.batch_size, self.n_obs, self.n_states), requires_grad=False)
             else:
                 self.M = torch.nn.Parameter(memory, requires_grad=False)
     
@@ -124,8 +125,9 @@ class POCML(torch.nn.Module):
 
     # Retrieves state from memory given obs (Eq. 22).
     # x [B, n_obs]
-    def get_state_from_memory(self, x):
+    def get_state_from_memory(self, x, mask=None):
         p_x_given_u = torch.einsum("bos,bo->bs", self.__prob_obs_given_state(), x)
+        if mask is not None: p_x_given_u = p_x_given_u * mask
         return p_x_given_u / p_x_given_u.sum(dim=1).unsqueeze(-1)
 
     # M [B, n_obs, n_states]; apply softmax over dim=1
@@ -155,8 +157,8 @@ class POCML(torch.nn.Module):
         return self.state
     
     # oh_o_next [B, n_obs]
-    def update_state_given_obs(self, oh_o_next, eps=1e-4):
-        x_given_u = self.get_state_from_memory(oh_o_next) # [B, n_s]
+    def update_state_given_obs(self, oh_o_next, eps=1e-4, mask=None):
+        x_given_u = self.get_state_from_memory(oh_o_next, mask=mask) # [B, n_s]
         u = (self.u) * (x_given_u) # [B, n_s]
         self.u = u / u.sum(dim=1).unsqueeze(-1)
         return self.u
@@ -273,16 +275,19 @@ class POCML(torch.nn.Module):
         phi_Q = self.random_feature_map(self.Q.T).T
         return phi_Q.detach()
 
-    # TODO batch
-    def traverse(self, traj, update_state_given_obs=False, update_memory=True, softmax=False, beta=1000, debug=False):
-        oh_o_first = F.one_hot(traj[0,0], num_classes=self.n_obs).to(torch.float32)
+    def traverse(self, traj, update_state_given_obs=False, update_memory=True, softmax=False, beta=1000, lr=1, max_iter=1, eps=1e-3, debug=False):
+        oh_o_first = F.one_hot(traj[:, 0,0], num_classes=self.n_obs).to(torch.float32)
         if update_memory:
             if debug:
                 print(self.u, oh_o_first)
-            self.update_memory(self.u, oh_o_first)
+            self.update_memory(self.u, oh_o_first, lr=lr, max_iter=max_iter, eps=eps)
 
         predictions = []
-        for _, a, o_next, _, _ in traj:
+        for t in range(traj.shape[1]):
+            o_pre = traj[:, t, 0]
+            a = traj[:, t, 1]
+            o_next = traj[:, t, 2]
+
             oh_o_next = F.one_hot(o_next, num_classes=self.n_obs).to(torch.float32)  # one-hot encoding of the first observation
             oh_a = F.one_hot(a, num_classes=self.n_actions).to(torch.float32)     # one-hot encoding of the first observation
             
@@ -291,7 +296,7 @@ class POCML(torch.nn.Module):
             if softmax:
                 oh_u_next = F.softmax(beta * oh_u_next, dim=0)
             oh_o_next_pred = self.get_obs_from_memory(oh_u_next) # predict observation with updated state
-            predictions.append(oh_o_next_pred)
+            predictions.append(oh_o_next_pred.squeeze())
 
             # Clean up state \phi(\hat{s}_{t+1})
             if update_state_given_obs:
@@ -300,7 +305,7 @@ class POCML(torch.nn.Module):
             if update_memory:
                 if debug:
                     print(oh_u_next, oh_o_next)
-                self.update_memory(oh_u_next, oh_o_next)
+                self.update_memory(oh_u_next, oh_o_next, lr=lr, max_iter=max_iter, eps=eps)
         return torch.stack(predictions, dim=0)
 
 class LSTM(torch.nn.Module):

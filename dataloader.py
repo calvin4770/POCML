@@ -457,7 +457,7 @@ class GraphEnv():
     
     def gen_zero_shot_dataset(self, trajectory_length=None, num_environments=10):
         if trajectory_length is None:
-            trajectory_length = self.batch_size
+            trajectory_length = self.trajectory_length
 
         action_type = "unique"
         if self.env in ["regular", "two tunnel", "grid", "tree"]:

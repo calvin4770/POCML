@@ -14,7 +14,7 @@ def pca_visualize(model, env, log=False, show=True):
     ax.scatter(Q_pca[:, 0], Q_pca[:, 1])
     ax.set_xlabel("PC 1")
     ax.set_ylabel("PC 2")
-    colors = ["red", "green", "blue", "yellow"]
+    colors = ["red", "green", "blue", "orange"]
     for i, (x, y) in enumerate(Q_pca):
         ax.text(x, y, f'State {i}', fontsize=16)
         actions = env.affordance[i].tolist()

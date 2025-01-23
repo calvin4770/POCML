@@ -3,6 +3,7 @@ import torch.nn.functional as F
 
 from dataloader import GraphEnv, Env
 from model import POCML
+from tqdm import tqdm
 
 def accuracy(model, dataloader):
     total, correct = 0, 0
@@ -96,41 +97,64 @@ def zero_shot_accuracy(model,
                        update_state_given_obs=True, 
                        update_memory=False,
                        softmax=False, 
-                       beta=1000):
+                       lr=1,
+                       max_iter=1,
+                       eps=1e-3,
+                       beta=1000,
+                       test_acc=True):
     total, correct = 0, 0
-    for traj1, traj2 in dataset:
-        #traj2 = traj1 # TODO
+    for t1, t2 in tqdm(dataset):
+        traj1 = t1.unsqueeze(0)
+        if test_acc:
+            traj2 = t2.unsqueeze(0)
+        else:
+            traj2 = t1.unsqueeze(0)
+        
         model.init_time()
-        model.init_memory(bias=False)
-        model.init_state(state_idx=traj1[0, 3])
-        model.traverse(traj1,
-                       update_state_given_obs=False,
-                       update_memory=True,
-                       softmax=softmax,
-                       beta=beta) # populate memory
+        model.init_memory()
+        model.init_state(state_idx=traj1[:, 0, 3])
+        model.traverse(
+            traj1,
+            update_state_given_obs=False,
+            update_memory=True,
+            softmax=softmax,
+            lr=lr,
+            max_iter=max_iter,
+            eps=eps,
+            beta=beta
+        ) # populate memory
 
         model.init_time()
-        model.init_state(state_idx=traj2[0, 3])
+        model.init_state(state_idx=traj2[:, 0, 3])
         y_pred = model.traverse(
             traj2, 
             update_state_given_obs=update_state_given_obs, 
             update_memory=update_memory,
             softmax=softmax,
-            beta=beta) # one-hot
+            lr=lr,
+            max_iter=max_iter,
+            eps=eps,
+            beta=beta
+        ) # one-hot
 
-        y = traj2[:, 2] # not one-hot
-        correct += (y == y_pred.argmax(dim=1)).sum()
+        y = traj2[0, :, 2] # not one-hot
+        correct += (y == y_pred.argmax(dim=1)).sum().item()
         total += y.shape[0]
     return correct / total
 
-def zero_shot_accuracy_benchmark(model, dataset):
+def zero_shot_accuracy_benchmark(model, dataset, test_acc=True):
     total, correct = 0, 0
-    for traj1, traj2, y in dataset:
-        #traj2 = traj1 # TODO
+    for t1, t2, y in dataset:
+        traj1 = t1
+        if test_acc:
+            traj2 = t2
+        else:
+            traj2 = t1
+        
         model.reset_state()
         model(traj1) # populate memory
         y_pred = model(traj2)[1:, :]
-        correct += (y == y_pred.argmax(dim=1)).sum()
+        correct += (y == y_pred.argmax(dim=1)).sum().item()
         total += y.shape[0]
     return correct / total
 
@@ -138,7 +162,7 @@ def test_two_tunnel(model: POCML):
     trajectory_length, num_desired_trajectories = 15, 1
     env = GraphEnv(
         env='two tunnel', 
-        batch_size=trajectory_length, 
+        trajectory_length=trajectory_length, 
         num_desired_trajectories=num_desired_trajectories
     )
     env.populate_graph_preset()
@@ -149,22 +173,27 @@ def test_two_tunnel(model: POCML):
         [1, 2, 0, 1, 0],
         [0, 1, 3, 0, 3],
         [3, 1, 5, 3, 6]]
-    )
+    ).unsqueeze(0)
     model.init_time()
-    model.init_memory(bias=False)
-    model.init_state(state_idx=traj[0, 3])
+    model.init_memory()
+    model.init_state(state_idx=traj[:, 0, 3])
     model.traverse(
         traj,
         update_state_given_obs=False,
         update_memory=True,
-        softmax=True,
+        softmax=False,
+        lr=5,
+        max_iter=1,
+        eps=1e-3,
         beta=100,
         debug=True)
+
+    mask = torch.tensor([[1, 1, 1, 1, 0, 1, 1, 0, 1]])
 
     ps = []
     e = Env(env)
     e.init_state(5)
-    model.init_state(e.get_obs())
+    model.init_state(obs=e.get_obs().unsqueeze(0), mask=mask)
     ps.append(model.u)
     policy = [1, 3, 3, 1, -1, 0, -1, -1, 0]
     for _ in range(20):
@@ -172,16 +201,17 @@ def test_two_tunnel(model: POCML):
         a = policy[state_est]
         print("action", a)
         e.step(a)
+
+        oh_a = F.one_hot(torch.tensor(a), num_classes=4).to(torch.float32).unsqueeze(0)
+        hd_s_pred_bind_precleanup = model.update_state(oh_a) # update state by binding action
+        oh_u_next = model.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
+        oh_o_next = e.get_obs().unsqueeze(0)
+        print("obs", e.get_obs())
+        model.update_state_given_obs(oh_o_next, mask=mask)
+        model.clean_up()
+        ps.append(model.u)
+
         if e.state == 6:
             print("goal state reached")
             break
-
-        oh_a = F.one_hot(torch.tensor(a), num_classes=4).to(torch.float32)
-        hd_s_pred_bind_precleanup = model.update_state(oh_a) # update state by binding action
-        oh_u_next = model.get_expected_state(hd_s_pred_bind_precleanup) # get p(u | \phi(\hat{s}_{t+1}'))
-        oh_o_next = e.get_obs()
-        print(e.get_obs())
-        model.update_state_given_obs(oh_o_next)
-        model.clean_up()
-        ps.append(model.u)
-    return torch.stack(ps)
+    return torch.cat(ps, dim=0).T
