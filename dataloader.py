@@ -267,70 +267,6 @@ def edges_from_adjacency(adj_matrix, action_type='unique', args=None):
                     if j - i == -1: action_indices[(i, j)] = 3
                     if j - i == 3: action_indices[(i, j)] = 1
                     if j - i == -3: action_indices[(i, j)] = 0
-        # L = args["tunnel_length"]
-        # M = args["middle_tunnel_length"]
-
-        # # first L -> upper tunnel, next L -> lower tunnel, next M -> middle tunnel
-        # # then upper corner, lower corner, upper end, lower end
-
-        # up_tun_head = 0
-        # up_tun_end = L - 1
-        # low_tun_head = L
-        # low_tun_end = L * 2 - 1
-        # mid_tun_head = L * 2
-        # mid_tun_end = L * 2 + M - 1
-        # up_corner = L * 2 + M
-        # low_corner = L * 2 + M + 1
-        # up_end = L * 2 + M + 2
-        # low_end = L * 2 + M + 3
-
-        # # construct upper and lower tunnels
-        # for i in range(L-1):
-        #     edges.append((up_tun_head + i, up_tun_head + i + 1))
-        #     action_indices[(up_tun_head + i, up_tun_head + i + 1)] = 0 # right
-        #     edges.append((up_tun_head + i + 1, up_tun_head + i))
-        #     action_indices[(up_tun_head + i + 1, up_tun_head + i)] = 1 # left
-        #     edges.append((low_tun_head + i, low_tun_head + i + 1))
-        #     action_indices[(low_tun_head + i, low_tun_head + i + 1)] = 0 # right
-        #     edges.append((low_tun_head + i + 1, low_tun_head + i))
-        #     action_indices[(low_tun_head + i + 1, low_tun_head + i)] = 1 # left
-
-        # # construct middle tunnel
-        # for i in range(M-1):
-        #     edges.append((mid_tun_head + i, mid_tun_head + i + 1))
-        #     action_indices[(mid_tun_head + i, mid_tun_head + i + 1)] = 2 # down
-        #     edges.append((mid_tun_head + i + 1, mid_tun_head + i))
-        #     action_indices[(mid_tun_head + i + 1, mid_tun_head + i)] = 3 # up
-
-        # # connect upper corner
-        # edges.append((up_corner, up_tun_head))
-        # action_indices[(up_corner, up_tun_head)] = 0 # right
-        # edges.append((up_tun_head, up_corner))
-        # action_indices[(up_tun_head, up_corner)] = 1 # left
-        # edges.append((up_corner, mid_tun_head))
-        # action_indices[(up_corner, mid_tun_head)] = 2 # down
-        # edges.append((mid_tun_head, up_corner))
-        # action_indices[(mid_tun_head, up_corner)] = 3 # up
-
-        # # connect lower corner
-        # edges.append((low_corner, low_tun_head))
-        # action_indices[(low_corner, low_tun_head)] = 0 # right
-        # edges.append((low_tun_head, low_corner))
-        # action_indices[(low_tun_head, low_corner)] = 1 # left
-        # edges.append((low_corner, mid_tun_end))
-        # action_indices[(low_corner, mid_tun_end)] = 3 # up
-        # edges.append((mid_tun_end, low_corner))
-        # action_indices[(mid_tun_end, low_corner)] = 2 # down
-
-        # # connect ends
-        # edges.append((up_end, up_tun_end))
-        # action_indices[(up_end, up_tun_end)] = 0 # right
-        # edges.append((up_tun_end, up_end))
-        # action_indices[(up_tun_end, up_end)] = 1 # left
-        # edges.append((low_end, low_tun_end))
-        # action_indices[(low_end, low_tun_end)] = 0 # right
-        # edges.append((low_tun_end, low_end))
-        # action_indices[(low_tun_end, low_end)] = 1 # left
     elif action_type == "tree":
         for i in range(n):
             if 2*i+1 < n:
@@ -371,12 +307,7 @@ class GraphEnv():
             self.adj_matrix = construct_grid_graph(rows, cols)
             self.n_actions = 4
         elif env == 'two tunnel':
-            # tunnel_length = args["tunnel_length"]
-            # middle_tunnel_length = args["middle_tunnel_length"]
-            # self.adj_matrix = construct_two_tunnel_graph(
-            #     tunnel_length=tunnel_length, middle_tunnel_length=middle_tunnel_length)
             self.adj_matrix = construct_grid_graph(3, 3)
-            # nodes 4 and 7 are blocked
             self.adj_matrix[4, :] = 0
             self.adj_matrix[:, 4] = 0
             self.adj_matrix[7, :] = 0
@@ -482,14 +413,6 @@ class GraphEnv():
 
     def populate_graph_preset(self):
         if self.env == 'two tunnel':
-            # L = self.tunnel_length
-            # M = self.middle_tunnel_length
-            # self.items = torch.zeros(self.size)
-            # self.items[L*2:L*2+M] = 1
-            # self.items[L*2+M] = 2
-            # self.items[L*2+M+1] = 3
-            # self.items[L*2+M+2] = 4
-            # self.items[L*2+M+3] = 5
             self.items = torch.tensor([0, 1, 2, 3, 4, 3, 5, 4, 6])
             self.n_items = 9
 
