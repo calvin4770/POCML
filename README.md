@@ -1,4 +1,5 @@
-# POCML
+# Partially Observable Cognitive Map Learners
+Source code for the paper [Cognitive map formation under uncertainty via local prediction learning](https://www.sciencedirect.com/science/article/pii/S2667305325000778).
 
 ## File Descriptions
 - `data_visualization.ipynb`: used for figure generation in the paper
